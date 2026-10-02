@@ -40,6 +40,10 @@ public class LessonPlanRecord extends PanacheEntityBase {
 
     public String model;
 
+    /** Textbook pages the plan was built from: JSON like [{"bookId":1,"pages":"45-46"}]. */
+    @Column(name = "book_refs")
+    public String bookRefs;
+
     @Column(name = "tokens_in")
     public int tokensIn;
 

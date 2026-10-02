@@ -21,6 +21,7 @@ public class BotMenu {
             new BotCommand("plan", "Составить план урока"),
             new BotCommand("classes", "Мои классы"),
             new BotCommand("schedule", "Расписание"),
+            new BotCommand("books", "Учебники"),
             new BotCommand("history", "Прошлые планы"),
             new BotCommand("profile", "Профиль"),
             new BotCommand("help", "Помощь"),

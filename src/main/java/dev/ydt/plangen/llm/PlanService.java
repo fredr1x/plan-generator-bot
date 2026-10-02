@@ -20,7 +20,8 @@ public class PlanService {
 
     /** previous: JSON of an earlier plan to be edited instead of writing a new one (null for a fresh plan). */
     public record Request(String subject, String lang, int minutes, String classes, int students,
-                          String section, String topic, String objectives, String notes, String previous) {}
+                          String section, String topic, String objectives, String notes, String previous,
+                          String book) {}
 
     /** The plan plus what it cost: tokens over all attempts and wall-clock time. */
     public record Generated(LessonContent content, int tokensIn, int tokensOut, int attempts, long millis) {}
@@ -58,16 +59,18 @@ public class PlanService {
         LessonContent content = null;
         String feedback = "none";
 
-        LOG.infof("LLM request: model=%s lang=%s minutes=%d classes=\"%s\" students=%d topic=\"%s\" revision=%s notes=%s",
+        LOG.infof("LLM request: model=%s lang=%s minutes=%d classes=\"%s\" students=%d topic=\"%s\" revision=%s notes=%s "
+                        + "book=%s",
                 model, r.lang(), r.minutes(), r.classes(), r.students(), clip(r.topic(), 80),
-                r.previous() != null, r.notes() == null || r.notes().isBlank() ? "-" : "yes");
+                r.previous() != null, r.notes() == null || r.notes().isBlank() ? "-" : "yes",
+                r.book() == null || r.book().isBlank() ? "no" : r.book().length() + " chars");
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             attempts = attempt;
             long t0 = System.nanoTime();
             Result<LessonContent> result = planner.plan(r.subject(), languageName(r.lang()), r.minutes(),
                     r.classes(), r.students(), r.section(), r.topic(), r.objectives(), blankToNo(r.notes()),
-                    blankToNo(r.previous()), feedback);
+                    blankToNo(r.previous()), blankToNo(r.book()), feedback);
             TokenUsage usage = result.tokenUsage();
             int in = usage == null || usage.inputTokenCount() == null ? 0 : usage.inputTokenCount();
             int out = usage == null || usage.outputTokenCount() == null ? 0 : usage.outputTokenCount();

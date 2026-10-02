@@ -13,6 +13,9 @@ Learning objectives according to the curriculum (from the teacher, verbatim, wit
 
 Teacher's wishes: {notes}
 
+Textbook pages for this lesson (structured data of the pages; "none" if the teacher gave no pages):
+{book}
+
 Previous version of the plan (if given, edit it according to the teacher's wishes and keep everything else: structure, timings, language, good tasks): {previous}
 
 Remark about the previous attempt: {feedback}

@@ -24,6 +24,7 @@ public class Router {
             /plan — составить план урока
             /classes — мои классы
             /schedule — расписание
+            /books — загруженные учебники
             /history — прошлые планы
             /profile — Ф.И.О., школа, предмет, язык, длительность урока
             /cancel — отменить текущий ввод
@@ -110,6 +111,11 @@ public class Router {
                 case "schedule" -> {
                     ConvState.clear(uid);
                     schedule.show(uid, chat);
+                    return;
+                }
+                case "books" -> {
+                    ConvState.clear(uid);
+                    plan.books(chat);
                     return;
                 }
                 case "history" -> {

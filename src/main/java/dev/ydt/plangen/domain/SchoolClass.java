@@ -27,6 +27,9 @@ public class SchoolClass extends PanacheEntityBase {
     @Column(name = "student_count")
     public int studentCount;
 
+    /** Only for grades 10-11: natural_math or social_humanities (null = not set). */
+    public String track;
+
     /** "7 А". */
     public String label() {
         return grade + " " + letter;

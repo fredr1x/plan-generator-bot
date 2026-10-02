@@ -2,6 +2,7 @@ package dev.ydt.plangen.bot;
 
 import static dev.ydt.plangen.bot.Kb.btn;
 
+import dev.ydt.plangen.domain.Book;
 import dev.ydt.plangen.domain.ConvState;
 import dev.ydt.plangen.domain.ScheduleEntry;
 import dev.ydt.plangen.domain.SchoolClass;
@@ -21,7 +22,7 @@ public class ClassesFlow {
     static final String CLASSES_ADD = "CLASSES_ADD";
 
     private static final Pattern LINE =
-            Pattern.compile("^\\s*(\\d{1,2})\\s*[-–]?\\s*(\\p{L})\\s*[-–:,]?\\s*(\\d{1,3})\\s*$");
+            Pattern.compile("^\\s*(\\d{1,2})\\s*[-–]?\\s*(\\p{L})\\s*[-–:,]?\\s*(\\d{1,3})(?:\\s+(\\p{L}[\\p{L}.\\-]*))?\\s*$");
 
     /** Latin letters typed by mistake in class names are mapped to their Cyrillic twins. */
     private static final Map<Character, Character> TWINS = Map.of(
@@ -29,6 +30,20 @@ public class ClassesFlow {
 
     @Inject
     Messenger bot;
+
+    /** "ЕМН", "ест.-мат", "natural" -> natural_math; "ОГН", "общ", "social" -> social_humanities; else null. */
+    static String parseTrack(String word) {
+        if (word == null) return null;
+        String w = word.toLowerCase(java.util.Locale.ROOT);
+        if (w.startsWith("ем") || w.startsWith("ест") || w.startsWith("nat") || w.startsWith("em")) {
+            return Book.NATURAL_MATH;
+        }
+        if (w.startsWith("ог") || w.startsWith("общ") || w.startsWith("гум") || w.startsWith("soc")
+                || w.startsWith("hum") || w.startsWith("og")) {
+            return Book.SOCIAL_HUMANITIES;
+        }
+        return null;
+    }
 
     static String normLetter(String letter) {
         String up = letter.toUpperCase(java.util.Locale.ROOT); // never depend on the server locale
@@ -45,8 +60,15 @@ public class ClassesFlow {
         } else {
             sb.append("🏫 Ваши классы:\n");
             for (SchoolClass c : classes) {
-                sb.append("• ").append(c.label()).append(" — ").append(c.studentCount).append(" уч.\n");
-                rows.add(btn("🗑 " + c.label(), "cls:del:" + c.id));
+                sb.append("• ").append(c.label()).append(" — ").append(c.studentCount).append(" уч.");
+                if (c.grade >= 10) {
+                    sb.append(c.track == null ? " (направление не указано)" : ", " + Book.trackLabel(c.track));
+                }
+                sb.append('\n');
+                rows.add(c.grade >= 10
+                        ? List.of(btn("🗑 " + c.label(), "cls:del:" + c.id),
+                                btn("🧭 направление", "cls:trkask:" + c.id))
+                        : List.of(btn("🗑 " + c.label(), "cls:del:" + c.id)));
             }
         }
         rows.add(btn("➕ Добавить / обновить классы", "cls:add"));
@@ -60,9 +82,23 @@ public class ClassesFlow {
                 ConvState.set(uid, CLASSES_ADD, null);
                 bot.send(chat, "Пришлите классы и количество учеников, каждый с новой строки:\n\n"
                         + "7 А 25\n7 Б 24\n8 А 27\n\n"
+                        + "Для 10–11 классов можно добавить направление: «10 А 22 ЕМН» (естественно-математическое) "
+                        + "или «11 Б 20 ОГН» (общественно-гуманитарное). Если не написать, бот спросит.\n\n"
                         + "Если класс уже есть, количество обновится. Отмена: /cancel", null);
             }
             case "list" -> list(uid, chat);
+            case "trkask" -> {
+                SchoolClass c = owned(uid, Long.parseLong(p[2]));
+                if (c != null) askTrack(chat, c);
+            }
+            case "trk" -> {
+                SchoolClass c = owned(uid, Long.parseLong(p[2]));
+                if (c != null) {
+                    c.track = "nm".equals(p[3]) ? Book.NATURAL_MATH : Book.SOCIAL_HUMANITIES;
+                    bot.send(chat, "✅ " + c.label() + ": " + Book.trackLabel(c.track) + " направление.",
+                            Kb.row(btn("Мои классы", "cls:list")));
+                }
+            }
             case "del" -> {
                 SchoolClass c = owned(uid, Long.parseLong(p[2]));
                 if (c == null) {
@@ -87,6 +123,7 @@ public class ClassesFlow {
     public void onText(long uid, long chat, String text) {
         List<String> saved = new ArrayList<>();
         List<String> bad = new ArrayList<>();
+        List<SchoolClass> needTrack = new ArrayList<>();
         for (String line : text.split("\\R")) {
             if (line.isBlank()) continue;
             Matcher m = LINE.matcher(line);
@@ -110,8 +147,15 @@ public class ClassesFlow {
                 c.letter = letter;
             }
             c.studentCount = count;
+            String track = parseTrack(m.group(4));
+            if (grade < 10) {
+                c.track = null;
+            } else if (track != null) {
+                c.track = track;
+            }
             c.persist();
-            saved.add(c.label() + " — " + count);
+            saved.add(c.label() + " — " + count + (c.track == null ? "" : ", " + Book.trackLabel(c.track)));
+            if (grade >= 10 && c.track == null) needTrack.add(c);
         }
         StringBuilder sb = new StringBuilder();
         if (!saved.isEmpty()) {
@@ -127,6 +171,15 @@ public class ClassesFlow {
         }
         ConvState.clear(uid);
         bot.send(chat, sb.toString(), Kb.row(btn("Мои классы", "cls:list")));
+        // grades 10-11 are split into tracks and the textbooks depend on it
+        needTrack.forEach(c -> askTrack(chat, c));
+    }
+
+    private void askTrack(long chat, SchoolClass c) {
+        bot.send(chat, "Направление класса " + c.label() + "? От него зависят учебники.", Kb.rows()
+                .add(btn("Естественно-математическое", "cls:trk:" + c.id + ":nm"))
+                .add(btn("Общественно-гуманитарное", "cls:trk:" + c.id + ":sh"))
+                .build());
     }
 
     private SchoolClass owned(long uid, long id) {

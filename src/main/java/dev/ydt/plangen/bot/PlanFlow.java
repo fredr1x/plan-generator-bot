@@ -13,6 +13,8 @@ import dev.ydt.plangen.domain.SchoolClass;
 import dev.ydt.plangen.domain.Teacher;
 import dev.ydt.plangen.llm.LessonContent;
 import dev.ydt.plangen.llm.PlanService;
+import dev.ydt.plangen.service.AnswerKeys;
+import dev.ydt.plangen.service.BookService;
 import dev.ydt.plangen.service.TimeService;
 import dev.ydt.plangen.telegram.Dto.InlineButton;
 import dev.ydt.plangen.telegram.Dto.InlineKeyboard;
@@ -74,10 +76,14 @@ public class PlanFlow {
      */
     private record Job(long userId, long chatId, Long placeholderId, LocalDate date, String subject, String lang,
                        int minutes, String school, String teacher, String classes, int students,
-                       String section, String topic, String objectives, String notes, String previousJson) {}
+                       String section, String topic, String objectives, String notes, String previousJson,
+                       String bookRefs, String bookContext, List<BookService.Answer> bookAnswers) {}
 
     @Inject
     Messenger bot;
+
+    @Inject
+    BookFlow bookFlow;
 
     @Inject
     PlanService plans;
@@ -166,8 +172,20 @@ public class PlanFlow {
                 }
                 askNext(uid, chat, d);
             }
+            case BookFlow.PLAN_PAGES -> {
+                if (bookFlow.onPages(uid, chat, d, classes(uid, d), LocalDate.parse(d.date), text)) {
+                    askNext(uid, chat, d);
+                }
+            }
+            case BookFlow.PLAN_BOOK ->
+                    bot.send(chat, "Выберите книгу кнопкой выше или нажмите «Без учебника».", null);
             default -> bot.send(chat, "Нажмите одну из кнопок выше или /cancel, чтобы начать заново.", null);
         }
+    }
+
+    /** /books. */
+    public void books(long chat) {
+        bookFlow.list(chat);
     }
 
     public void onCallback(long uid, long chat, long msgId, String cbId, String[] p) {
@@ -265,9 +283,29 @@ public class PlanFlow {
                 bot.answer(cbId, null);
                 copyPlan(uid, chat, d);
             }
+            case "bk" -> {
+                bot.answer(cbId, null);
+                if (bookFlow.onChoose(uid, chat, d, classes(uid, d), LocalDate.parse(d.date), p[2])) {
+                    askNext(uid, chat, d);
+                }
+            }
+            case "find" -> {
+                bot.answer(cbId, null);
+                bookFlow.onFind(uid, chat, d);
+            }
+            case "pg" -> {
+                bot.answer(cbId, null);
+                if (bookFlow.onPages(uid, chat, d, classes(uid, d), LocalDate.parse(d.date), p[2])) {
+                    askNext(uid, chat, d);
+                }
+            }
             case "edit" -> {
                 bot.answer(cbId, null);
                 switch (p[2]) {
+                    case "book" -> {
+                        bookFlow.reset(d);
+                        askNext(uid, chat, d);
+                    }
                     case "date" -> {
                         save(uid, PLAN_DATE_EDIT, d);
                         askDay(chat, "Новая дата урока:", "pl:dd:");
@@ -341,6 +379,8 @@ public class PlanFlow {
         } else if (blank(d.objectives)) {
             ask(uid, chat, d, PLAN_OBJECTIVES,
                     "Цели обучения с кодами (скопируйте из КТП или программы, например: 7.2.3.1 …):");
+        } else if (!d.bookAsked && bookFlow.offer(uid, chat, d, classes(uid, d), LocalDate.parse(d.date))) {
+            // a question about the textbook was sent, the flow waits for the answer
         } else if (d.notes == null) {
             save(uid, PLAN_NOTES, d);
             bot.send(chat, "Есть пожелания к уроку? Например: «начать с игры», «работа в парах», «больше устной "
@@ -365,6 +405,7 @@ public class PlanFlow {
                 + "Раздел: " + d.section + "\n"
                 + "Тема: " + d.topic + "\n"
                 + "Цели обучения:\n" + Kb.trunc(d.objectives, 700)
+                + bookFlow.summaryLine(d)
                 + (d.notes.isBlank() ? "" : "\nПожелания: " + Kb.trunc(d.notes, 300));
         save(uid, PLAN_CONFIRM, d);
         Kb.Rows rows = Kb.rows().add(btn("✅ Составить план", "pl:go"));
@@ -374,7 +415,8 @@ public class PlanFlow {
         rows.add(btn("✏️ Дата", "pl:edit:date"), btn("✏️ Классы", "pl:edit:classes"))
                 .add(btn("✏️ Раздел", "pl:edit:section"), btn("✏️ Тема", "pl:edit:topic"),
                         btn("✏️ Цели", "pl:edit:objectives"))
-                .add(btn("✏️ Пожелания", "pl:edit:notes"), btn("✖ Отмена", "pl:cancel"));
+                .add(btn("✏️ Пожелания", "pl:edit:notes"), btn("📚 Учебник", "pl:edit:book"))
+                .add(btn("✖ Отмена", "pl:cancel"));
         bot.send(chat, text, rows.build());
     }
 
@@ -393,7 +435,8 @@ public class PlanFlow {
         Long placeholder = bot.send(chat, "⏳ Составляю план. Обычно это занимает 20–60 секунд…", null);
         Job job = new Job(uid, chat, placeholder, LocalDate.parse(d.date), t.subject, t.lang, t.lessonMinutes,
                 t.school, t.fullName, labels(classes), classes.stream().mapToInt(c -> c.studentCount).sum(),
-                d.section, d.topic, d.objectives, d.notes, null);
+                d.section, d.topic, d.objectives, d.notes, null, bookFlow.toJson(d.books),
+                bookFlow.contextFor(d.books), bookFlow.answersFor(d.books));
         exec.submit(() -> run(job));
     }
 
@@ -422,7 +465,8 @@ public class PlanFlow {
         Long placeholder = bot.send(chat, progress, null);
         Job job = new Job(uid, chat, placeholder, r.planDate, t.subject, t.lang, t.lessonMinutes, t.school,
                 t.fullName, r.classes, r.students, r.section, r.topic, r.objectives, note,
-                editPrevious ? r.contentJson : null);
+                editPrevious ? r.contentJson : null, r.bookRefs, bookFlow.contextFor(bookFlow.fromJson(r.bookRefs)),
+                bookFlow.answersFor(bookFlow.fromJson(r.bookRefs)));
         exec.submit(() -> run(job));
     }
 
@@ -439,6 +483,8 @@ public class PlanFlow {
         d.objectives = r.objectives;
         d.notes = "";
         d.sourcePlanId = r.id;
+        d.books = bookFlow.fromJson(r.bookRefs);
+        d.bookAsked = true; // the same lesson keeps the same book pages
         save(uid, PLAN_DAY, d);
         askDay(chat, "Тот же урок «" + Kb.trunc(r.topic, 60) + "». На какой день?", "pl:d:");
     }
@@ -461,6 +507,7 @@ public class PlanFlow {
         r.topic = d.topic;
         r.objectives = d.objectives;
         r.contentJson = src.contentJson;
+        r.bookRefs = src.bookRefs;
         r.model = "copy";
         r.persist();
         LOG.infof("[copy] user=%d plan #%d copied to #%d for \"%s\" on %s (no model call)", uid, src.id, r.id,
@@ -518,8 +565,9 @@ public class PlanFlow {
                     job.classes(), Kb.trunc(job.topic(), 60), job.minutes(), job.previousJson() != null);
             PlanService.Generated g = plans.generate(new PlanService.Request(job.subject(), job.lang(),
                     job.minutes(), job.classes(), job.students(), job.section(), job.topic(), job.objectives(),
-                    job.notes(), job.previousJson()));
-            LessonContent content = g.content();
+                    job.notes(), job.previousJson(), job.bookContext()));
+            // the model picks and cites the exercises, the exact answer keys come from the stored page data
+            LessonContent content = AnswerKeys.inject(g.content(), job.bookAnswers());
             String json = mapper.writeValueAsString(content);
             Instant dayStart = time.startOf(time.today());
             record Saved(Long id, long[] today) {}
@@ -534,6 +582,7 @@ public class PlanFlow {
                 r.objectives = job.objectives();
                 r.contentJson = json;
                 r.model = plans.model();
+                r.bookRefs = job.bookRefs();
                 r.tokensIn = g.tokensIn();
                 r.tokensOut = g.tokensOut();
                 r.attempts = g.attempts();

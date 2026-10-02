@@ -28,5 +28,6 @@ public interface LessonPlanner {
             @V("objectives") String objectives,
             @V("notes") String notes,
             @V("previous") String previous,
+            @V("book") String book,
             @V("feedback") String feedback);
 }
