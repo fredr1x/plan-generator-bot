@@ -81,6 +81,11 @@
             <artifactId>poi-scratchpad</artifactId>
             <version>5.4.1</version>
         </dependency>
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.4</version>
+        </dependency>
         <!-- POI logs through the Log4j 2 API; route it into the Quarkus (JBoss) logging instead of the
              "Log4j API could not find a logging provider" error -->
         <dependency>

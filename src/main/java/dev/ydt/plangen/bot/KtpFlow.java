@@ -132,7 +132,7 @@ public class KtpFlow {
 
     private void askFile(long uid, long chat) {
         ConvState.set(uid, KTP_FILE, null);
-        bot.send(chat, "Пришлите файл КТП (Word: .docx или .doc). Я возьму из него юниты, темы, цели обучения с "
+        bot.send(chat, "Пришлите файл КТП (Word: .docx или .doc, либо PDF с текстом). Я возьму из него юниты, темы, цели обучения с "
                 + "кодами и часы. Таблицы у КТП бывают разные, нужны хотя бы номер, тема, цели и часы.\n"
                 + "Отмена: /cancel", null);
     }
@@ -141,8 +141,9 @@ public class KtpFlow {
     void onDocument(long uid, long chat, Document doc) {
         String name = doc.fileName() == null ? "" : doc.fileName();
         String low = name.toLowerCase(Locale.ROOT);
-        if (!doc.fileId().startsWith("local:") && !low.endsWith(".docx") && !low.endsWith(".doc")) {
-            bot.send(chat, "Для КТП пришлите файл Word (.docx или .doc).", null);
+        if (!doc.fileId().startsWith("local:") && !low.endsWith(".docx") && !low.endsWith(".doc")
+                && !low.endsWith(".pdf")) {
+            bot.send(chat, "Для КТП пришлите файл Word (.docx, .doc) или PDF с текстом.", null);
             return;
         }
         byte[] data;
@@ -167,8 +168,14 @@ public class KtpFlow {
             return;
         }
         // the plain code parse: the cross-check for the model, and the fallback when the model is not used
-        Outcome o = KtpParser.parse(raw, null);
-        LOG.infof("[ktp] user=%d file=\"%s\": %d table rows, columns %s", uid, fileName, raw.rows().size(),
+        if (raw.flat() && !useAi) {
+            bot.send(chat, "PDF читает только ИИ, а он сейчас выключен. Пришлите КТП в Word (.docx или .doc).", null);
+            return;
+        }
+        // a PDF has no table, so only the model can read it (no code parse to compare with)
+        Outcome o = raw.flat() ? new Outcome(null, true, List.of()) : KtpParser.parse(raw, null);
+        LOG.infof("[ktp] user=%d file=\"%s\": %d %s, columns %s", uid, fileName, raw.rows().size(),
+                raw.flat() ? "PDF text lines" : "table rows", raw.flat() ? "read by the model" :
                 o.needMapping() ? "NOT recognised" : "recognised");
         Import d = new Import();
         d.fileName = fileName;
@@ -212,6 +219,12 @@ public class KtpFlow {
                     d.viaAi = false;
                     review(uid, chat, d);
                 } else {
+                    if (d.raw.flat()) {
+                        ConvState.clear(uid);
+                        bot.send(chat, "ИИ сейчас недоступен, а PDF без него не прочитать. Попробуйте ещё раз "
+                                + "через минуту или пришлите КТП в Word.", null);
+                        return;
+                    }
                     save(uid, KTP_MAP, d);
                     bot.send(chat, "ИИ сейчас недоступен.\n" + mappingQuestion(KtpParser.parse(d.raw, null).preview()),
                             null);
@@ -357,7 +370,7 @@ public class KtpFlow {
         Kb.Rows buttons = Kb.rows()
                 .add(btn("✅ Верно, сохранить", "ktp:ok"))
                 .add(btn("📋 Показать юниты", "ktp:preview"), btn("✖ Отмена", "ktp:cancel"));
-        if (d.viaAi && d.raw != null) {
+        if (d.viaAi && d.raw != null && !d.raw.flat()) {
             buttons.add(btn("🔁 Разобрать без ИИ", "ktp:code"));
         }
         bot.send(chat, sb.toString(), buttons.build());

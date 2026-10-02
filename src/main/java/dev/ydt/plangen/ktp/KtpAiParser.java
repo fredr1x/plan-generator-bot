@@ -33,6 +33,17 @@ public class KtpAiParser {
     /** Rows per request: small enough that the answer is short and exact. */
     private static final int CHUNK_ROWS = 30;
 
+    /** A PDF has no table rows, only text lines (about nine per lesson), so its chunks are bigger. */
+    private static final int CHUNK_LINES = 240;
+
+    /** What the model is told about the lines of a PDF; the column names follow it. */
+    private static final String PDF_HEADER = "This is the text of a PDF, so there are no cell borders. Every line is "
+            + "\"x | text\", where x is the horizontal start position of a fragment of one table cell in points: "
+            + "fragments of the same column start at about the same x, and one cell's text may be wrapped over "
+            + "several consecutive lines. A lesson row starts with its number at the leftmost x; the cells that "
+            + "follow (unit, topic, objectives, hours, date) are listed from left to right, in the column order of "
+            + "the header lines below. First lines of the file: ";
+
     public record Result(Parsed parsed, int tokensIn, int tokensOut, int chunks) {}
 
     private final KtpModel model;
@@ -51,8 +62,11 @@ public class KtpAiParser {
     /** det is the plain code parse of the same file (may be null); it is used for checks and as the fallback. */
     public Result parse(RawDoc raw, Parsed det) {
         List<List<String>> rows = raw.rows();
-        int headerIdx = KtpParser.headerRowIndex(rows);
-        String header = headerIdx >= 0 ? line(headerIdx, rows.get(headerIdx))
+        boolean flat = raw.flat();
+        int headerIdx = flat ? -1 : KtpParser.headerRowIndex(rows);
+        String header = flat ? PDF_HEADER + rows.stream().limit(14).map(r -> String.join(" | ", r))
+                        .collect(Collectors.joining(" // "))
+                : headerIdx >= 0 ? line(headerIdx, rows.get(headerIdx))
                 : "not detected; the first rows are " + rows.stream().limit(3).map(r -> String.join(" | ", r))
                         .collect(Collectors.joining(" // "));
         List<Integer> data = new ArrayList<>();
@@ -72,13 +86,16 @@ public class KtpAiParser {
         int chunks = 0;
         long started = System.nanoTime();
 
-        int numCol = KtpParser.numberColumn(rows);
+        int numCol = flat ? -1 : KtpParser.numberColumn(rows);
+        boolean[] flatStart = flat ? flatLessonStarts(rows) : null;
+        int chunkRows = flat ? CHUNK_LINES : CHUNK_ROWS;
         int from = 0;
         while (from < data.size()) {
-            int to = Math.min(from + CHUNK_ROWS, data.size());
+            int to = Math.min(from + chunkRows, data.size());
             // never cut a lesson in two: its objectives may continue on the next row, so a chunk ends only
             // before a row that starts a new lesson (a row with a lesson number)
-            while (numCol >= 0 && to < data.size() && !startsLesson(rows.get(data.get(to)), numCol)) to++;
+            while (to < data.size() && (flat ? !flatStart[data.get(to)]
+                    : numCol >= 0 && !startsLesson(rows.get(data.get(to)), numCol))) to++;
             List<Integer> part = data.subList(from, to);
             from = to;
             String text = part.stream().map(i -> line(i, rows.get(i))).collect(Collectors.joining("\n"));
@@ -119,6 +136,27 @@ public class KtpAiParser {
         return new Result(p, tokensIn, tokensOut, chunks);
     }
 
+    /**
+     * PDF lines that start a lesson: a number alone or followed by text, at the leftmost x among such lines
+     * (the hours cell also holds a bare number, but far to the right).
+     */
+    private static boolean[] flatLessonStarts(List<List<String>> rows) {
+        boolean[] numeric = new boolean[rows.size()];
+        int minX = Integer.MAX_VALUE;
+        for (int i = 0; i < rows.size(); i++) {
+            List<String> r = rows.get(i);
+            if (r.size() == 2 && r.get(1).matches("\\d{1,3}") && r.get(0).matches("\\d+")) {
+                numeric[i] = true;
+                minX = Math.min(minX, Integer.parseInt(r.get(0)));
+            }
+        }
+        boolean[] out = new boolean[rows.size()];
+        for (int i = 0; i < rows.size(); i++) {
+            out[i] = numeric[i] && Integer.parseInt(rows.get(i).get(0)) <= minX + 20;
+        }
+        return out;
+    }
+
     private static boolean startsLesson(List<String> cells, int numCol) {
         return numCol < cells.size() && cells.get(numCol).strip().matches("\\d{1,3}");
     }
@@ -146,7 +184,9 @@ public class KtpAiParser {
             p.terms.add(t);
         });
 
-        String source = flat(raw.rows().stream().flatMap(List::stream).collect(Collectors.joining(" ")));
+        // the x positions of a PDF are not part of the text the model has to reproduce
+        String source = flat(raw.rows().stream().flatMap(r -> raw.flat() ? r.stream().skip(1) : r.stream())
+                .collect(Collectors.joining(" ")));
         boolean aligned = det != null && det.lessons.size() == ai.stream()
                 .filter(a -> a.topic() != null && !a.topic().isBlank()).count();
         int blankHours = 0;
@@ -210,9 +250,41 @@ public class KtpAiParser {
                     + String.join(", ", codeMismatch.stream().limit(10).toList())
                     + ". Цели в них взяты из разбора кодом.");
         }
+        if (det == null && raw.flat()) assignTermsByHours(p);
         notes.stream().limit(5).forEach(n -> p.warnings.add("ИИ: " + n));
         KtpParser.finish(p, blankHours);
         return p;
+    }
+
+    /**
+     * Where the file has no usable term rows per lesson (a PDF), the term of a lesson follows from the hours of
+     * each term: lessons are taken in order until the hours of the term are used up. Only done when the hours of
+     * the terms add up to the hours of all lessons, otherwise the terms from the model stay.
+     */
+    private static void assignTermsByHours(Parsed p) {
+        int lessonHours = p.lessons.stream().mapToInt(l -> l.hours).sum();
+        int termHours = 0;
+        for (Term t : p.terms) {
+            if (t.hours == null) return;
+            termHours += t.hours;
+        }
+        if (p.terms.isEmpty() || termHours != lessonHours) return;
+        int ti = 0;
+        int used = 0;
+        int changed = 0;
+        for (Lesson l : p.lessons) {
+            while (ti < p.terms.size() - 1 && used >= p.terms.get(ti).hours) {
+                used = 0;
+                ti++;
+            }
+            Integer no = p.terms.get(ti).no;
+            if (!java.util.Objects.equals(l.term, no)) changed++;
+            l.term = no;
+            used += l.hours;
+        }
+        if (changed > 0) {
+            p.warnings.add("Четверти уроков пересчитаны по часам четвертей (" + changed + " ур. изменено).");
+        }
     }
 
     private static void fillObjectives(Lesson l, List<AiObjective> items) {
@@ -222,11 +294,12 @@ public class KtpAiParser {
             for (AiObjective o : items) {
                 String code = o.code() == null ? "" : KtpParser.normCode(o.code());
                 if (!code.matches("\\d{1,2}\\.\\d{1,2}\\.\\d{1,2}\\.\\d{1,2}")) code = "";
-                String text = o.text() == null ? "" : tidy(o.text());
+                // the separators between objectives (; ,) are not part of the objective text
+                String text = o.text() == null ? "" : tidy(o.text()).replaceAll("[;,\\s]+$", "");
                 if (code.isEmpty() && text.isEmpty()) continue;
                 if (lines.length() > 0) lines.append('\n');
                 lines.append(code.isEmpty() ? text : code + (text.isEmpty() ? "" : " " + text));
-                if (!code.isEmpty()) {
+                if (!code.isEmpty() && !(", " + codes + ",").contains(", " + code + ",")) {
                     if (codes.length() > 0) codes.append(", ");
                     codes.append(code);
                 }

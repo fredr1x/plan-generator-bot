@@ -4,6 +4,10 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.pdfbox.text.TextPosition;
 import org.apache.poi.hwpf.HWPFDocument;
 import org.apache.poi.hwpf.usermodel.Paragraph;
 import org.apache.poi.hwpf.usermodel.Range;
@@ -24,8 +28,22 @@ import org.apache.poi.xwpf.usermodel.XWPFTableRow;
 public final class KtpReader {
     private KtpReader() {}
 
-    /** headText: the paragraphs before the first table; rows: the cells of every row of the lesson table. */
-    public record RawDoc(List<String> headText, List<List<String>> rows) {}
+    /**
+     * headText: the paragraphs before the first table; rows: the cells of every row of the lesson table.
+     * flat is true for a PDF: there are no cells, every row is one text line as ["x", "text"] where x is the
+     * horizontal start of the line in points (lines of one column start at the same x).
+     */
+    public record RawDoc(List<String> headText, List<List<String>> rows, boolean flat) {
+        public RawDoc(List<String> headText, List<List<String>> rows) {
+            this(headText, rows, false);
+        }
+    }
+
+    /** Lines shorter than this in total mean a scan without a text layer. */
+    private static final int MIN_PDF_CHARS = 300;
+
+    /** Gap in points between two words of a line above which they are taken as two table cells. */
+    private static final float CELL_GAP = 10f;
 
     public static RawDoc read(byte[] data) throws IOException {
         if (data.length > 4 && data[0] == 'P' && data[1] == 'K') {
@@ -34,7 +52,10 @@ public final class KtpReader {
         if (data.length > 4 && (data[0] & 0xFF) == 0xD0 && (data[1] & 0xFF) == 0xCF) {
             return readDoc(data);
         }
-        throw new IOException("Поддерживаются файлы Word: .docx и .doc");
+        if (data.length > 4 && data[0] == '%' && data[1] == 'P' && data[2] == 'D' && data[3] == 'F') {
+            return readPdf(data);
+        }
+        throw new IOException("Поддерживаются файлы Word (.docx, .doc) и PDF с текстом");
     }
 
     private static RawDoc readDocx(byte[] data) throws IOException {
@@ -88,6 +109,81 @@ public final class KtpReader {
             }
             return new RawDoc(head, best);
         }
+    }
+
+    /**
+     * A PDF with a text layer. The text is taken in the order it was written (for a PDF made from Word this keeps
+     * the text of one table cell together), one row per line with the x position of the line.
+     */
+    private static RawDoc readPdf(byte[] data) throws IOException {
+        List<List<String>> rows = new ArrayList<>();
+        try (PDDocument doc = Loader.loadPDF(data)) {
+            StringBuilder cur = new StringBuilder();
+            float[] firstX = {-1};
+            float[] lastEnd = {0};
+            PDFTextStripper stripper = new PDFTextStripper() {
+                private void flush() {
+                    String t = clean(cur.toString());
+                    if (!t.isEmpty()) rows.add(List.of(String.valueOf(Math.round(firstX[0])), t));
+                    cur.setLength(0);
+                    firstX[0] = -1;
+                }
+
+                @Override
+                protected void writeString(String text, List<TextPosition> positions) {
+                    // PDFBox hands over whole text runs ("44 Parts of body"), so cells are told apart by the
+                    // gap between glyphs: a wide gap inside a run means the next word is in the next table cell
+                    boolean space = false;
+                    for (TextPosition tp : positions) {
+                        String u = tp.getUnicode();
+                        if (u == null || u.isBlank()) {
+                            space = true;
+                            continue;
+                        }
+                        float x = tp.getXDirAdj();
+                        if (cur.length() > 0 && x - lastEnd[0] > CELL_GAP) {
+                            flush();
+                        } else if (space && cur.length() > 0) {
+                            cur.append(' ');
+                        }
+                        space = false;
+                        if (firstX[0] < 0) firstX[0] = x;
+                        cur.append(u);
+                        lastEnd[0] = x + tp.getWidthDirAdj();
+                    }
+                }
+
+                @Override
+                protected void writeWordSeparator() {
+                    cur.append(' ');
+                }
+
+                @Override
+                protected void writeLineSeparator() {
+                    flush();
+                }
+
+                @Override
+                protected void writeParagraphEnd() {
+                    flush();
+                }
+
+                @Override
+                protected void writePageEnd() {
+                    flush();
+                }
+            };
+            stripper.setSortByPosition(false);
+            stripper.getText(doc);
+        }
+        int chars = rows.stream().mapToInt(r -> r.get(1).length()).sum();
+        if (chars < MIN_PDF_CHARS) {
+            throw new IOException("в этом PDF нет текста (похоже на скан). Пришлите Word или PDF, из которого "
+                    + "можно выделить текст");
+        }
+        List<String> head = new ArrayList<>();
+        for (int i = 0; i < rows.size() && head.size() < 6; i++) head.add(rows.get(i).get(1));
+        return new RawDoc(head, rows, true);
     }
 
     /** Word cell text: control characters (cell and row marks) become spaces, whitespace is collapsed. */
