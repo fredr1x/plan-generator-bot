@@ -84,7 +84,7 @@ public final class PlanDocx {
     // ---------- header grid ----------
 
     private static void header(XWPFDocument doc, Labels l, Data d) {
-        XWPFTable t = table(doc, 6, HEADER_COLS);
+        XWPFTable t = table(doc, 7, HEADER_COLS);
 
         // row 0: section | school (span 2)
         labelled(t.getRow(0).getCell(0), l.section(), d.section());
@@ -105,34 +105,47 @@ public final class PlanDocx {
         label(t.getRow(3).getCell(0), l.topic());
         text(span(t.getRow(3), 1, HEADER_COLS), d.topic(), false);
 
-        // row 4: programme objectives exactly as the teacher typed them
+        // row 4: learning objectives exactly as the teacher typed them (codes)
         label(t.getRow(4).getCell(0), l.learningObjectives());
         text(span(t.getRow(4), 1, HEADER_COLS), d.objectives(), false);
 
-        // row 5: lesson objectives in three groups
-        label(t.getRow(5).getCell(0), l.lessonObjectives());
-        XWPFTableCell obj = span(t.getRow(5), 1, HEADER_COLS);
-        group(obj, l.allLearners(), d.content().allLearners(), true);
-        group(obj, l.mostLearners(), d.content().mostLearners(), false);
-        group(obj, l.someLearners(), d.content().someLearners(), false);
+        // row 5: the same caption with "(assessment criteria)" underneath, criteria derived from the objectives
+        XWPFTableCell crit = t.getRow(5).getCell(0);
+        label(crit, l.learningObjectives());
+        XWPFParagraph hint = crit.addParagraph();
+        hint.setSpacingAfter(0);
+        run(hint, l.assessmentCriteriaHint(), false, SIZE);
+        dashed(span(t.getRow(5), 1, HEADER_COLS), null, d.content().assessmentCriteria());
+
+        // row 6: lesson objectives, one heading and short dashed sentences
+        label(t.getRow(6).getCell(0), l.lessonObjectives());
+        dashed(span(t.getRow(6), 1, HEADER_COLS), l.learnersWillBeAble(), d.content().lessonObjectives());
     }
 
-    private static void group(XWPFTableCell cell, String heading, List<String> items, boolean first) {
-        XWPFParagraph p = first ? cell.getParagraphs().get(0) : cell.addParagraph();
-        p.setSpacingBefore(first ? 0 : 80);
-        p.setSpacingAfter(20);
-        run(p, heading, true, SIZE);
+    /** Optional bold heading, then one "- item" paragraph per item. */
+    private static void dashed(XWPFTableCell cell, String heading, List<String> items) {
+        boolean first = true;
+        if (heading != null) {
+            XWPFParagraph h = cell.getParagraphs().get(0);
+            h.setSpacingAfter(20);
+            run(h, heading, true, SIZE);
+            first = false;
+        }
+        if (items == null) {
+            return;
+        }
         for (String item : items) {
-            XWPFParagraph b = cell.addParagraph();
-            b.setSpacingAfter(20);
-            b.setIndentationLeft(240);
-            run(b, "• " + item, false, SIZE);
+            XWPFParagraph p = first ? cell.getParagraphs().get(0) : cell.addParagraph();
+            first = false;
+            p.setSpacingAfter(20);
+            run(p, "- " + item, false, SIZE);
         }
     }
 
     // ---------- lesson procedure ----------
 
-    private static void stages(XWPFDocument doc, Labels l, List<Stage> stages) {
+    private static void stages(XWPFDocument doc, Labels l, List<Stage> stageList) {
+        List<Stage> stages = stageList == null ? List.of() : stageList;
         XWPFTable t = table(doc, stages.size() + 1, STAGE_COLS);
         String[] heads = {l.stage(), l.teacherActions(), l.studentActions(), l.assessment(), l.resources()};
         XWPFTableRow head = t.getRow(0);
@@ -147,7 +160,8 @@ public final class PlanDocx {
             Stage s = stages.get(i);
             int to = from + s.minutes();
             XWPFTableRow row = t.getRow(i + 1);
-            text(row.getCell(0), s.name() + "\n(" + from + "–" + to + " " + l.minutes() + ")", false);
+            text(row.getCell(0), (s.name() == null ? "" : s.name()) + "\n(" + from + "–" + to + " " + l.minutes() + ")",
+                    false);
             text(row.getCell(1), s.teacherActions(), false);
             text(row.getCell(2), s.studentActions(), false);
             text(row.getCell(3), s.assessment(), false);

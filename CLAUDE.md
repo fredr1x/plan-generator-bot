@@ -24,6 +24,11 @@ Quarkus 3 / Java 21, Postgres (Neon) + Flyway, OpenAI через Quarkus LangCha
 ## Конфиг (env)
 
 `BOT_TOKEN`, `WEBHOOK_SECRET`, `ALLOWED_IDS`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `APP_TIMEZONE`, `DB_URL`, `DB_USER`, `DB_PASSWORD`, `PORT`, `DAILY_PLAN_LIMIT`. Пример: `.env.example`.
+Логи и расход: `LOG_LEVEL` (INFO по умолчанию), `OPENAI_LOG_REQUESTS=true` (сырые промпты и ответы), `PRICE_INPUT_PER_M` / `PRICE_OUTPUT_PER_M` (цены модели за 1 млн токенов, нужны только для оценки стоимости в логах). В логах: `[job]`, `[usage]` (токены и оценка за день), `[docx]`, `LLM attempt`. Токены и число попыток сохраняются в `lesson_plans`.
+
+## Важно про JSON
+
+Ответ модели парсится Jackson'ом, у которого глобально включён `SNAKE_CASE` (нужен для Telegram). Records с ответом модели (`LessonContent`, `Stage`) помечены `@JsonNaming(LowerCamelCaseStrategy)`: схема для модели строится из имён полей в camelCase, без этой аннотации многословные поля прочитаются как null. Новые records для ответа модели помечать так же.
 
 ## Соглашения
 

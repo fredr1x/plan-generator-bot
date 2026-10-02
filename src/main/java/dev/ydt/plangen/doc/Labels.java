@@ -1,6 +1,6 @@
 package dev.ydt.plangen.doc;
 
-/** Captions of the plan template per language (ru | kk | en). */
+/** Captions of the plan template per language (en | ru | kk). */
 public record Labels(
         String title,
         String section,
@@ -12,10 +12,9 @@ public record Labels(
         String absent,
         String topic,
         String learningObjectives,
+        String assessmentCriteriaHint,
         String lessonObjectives,
-        String allLearners,
-        String mostLearners,
-        String someLearners,
+        String learnersWillBeAble,
         String progress,
         String stage,
         String teacherActions,
@@ -32,14 +31,28 @@ public record Labels(
         };
     }
 
+    private static final Labels EN = new Labels(
+            "Short-term (lesson) plan",
+            "Unit / Section", "School", "Teacher's name", "Date", "Class",
+            "Number present", "Absent",
+            "Lesson topic",
+            "Learning objectives",
+            "(assessment criteria)",
+            "Lesson objectives",
+            "Learners will be able to:",
+            "Lesson procedure",
+            "Lesson stage / Time", "Teacher's actions", "Students' actions", "Assessment", "Resources",
+            "min");
+
     private static final Labels RU = new Labels(
             "Краткосрочный (поурочный) план",
             "Раздел", "Школа", "Ф.И.О. педагога", "Дата", "Класс",
             "Количество присутствующих", "Количество отсутствующих",
             "Тема урока",
-            "Цели обучения в соответствии с учебной программой",
+            "Цели обучения",
+            "(критерии оценивания)",
             "Цели урока",
-            "Все учащиеся смогут:", "Большинство учащихся смогут:", "Некоторые учащиеся смогут:",
+            "Учащиеся смогут:",
             "Ход урока",
             "Этап урока / Время", "Действия педагога", "Действия ученика", "Оценивание", "Ресурсы",
             "мин");
@@ -49,23 +62,11 @@ public record Labels(
             "Бөлім", "Мектеп", "Педагогтің Т.А.Ә.", "Күні", "Сынып",
             "Қатысқандар саны", "Қатыспағандар саны",
             "Сабақтың тақырыбы",
-            "Оқу бағдарламасына сәйкес оқыту мақсаттары",
+            "Оқыту мақсаттары",
+            "(бағалау критерийлері)",
             "Сабақтың мақсаттары",
-            "Барлық оқушылар орындай алады:", "Оқушылардың басым бөлігі орындай алады:",
-            "Кейбір оқушылар орындай алады:",
+            "Оқушылар орындай алады:",
             "Сабақтың барысы",
             "Сабақ кезеңі / Уақыты", "Педагогтің әрекеті", "Оқушының әрекеті", "Бағалау", "Ресурстар",
             "мин");
-
-    private static final Labels EN = new Labels(
-            "Short-term (lesson) plan",
-            "Unit / Section", "School", "Teacher's name", "Date", "Class",
-            "Number present", "Absent",
-            "Lesson topic",
-            "Learning objectives that this lesson is contributing to",
-            "Lesson objectives",
-            "All learners will be able to:", "Most learners will be able to:", "Some learners will be able to:",
-            "Lesson procedure",
-            "Lesson stage / Time", "Teacher's actions", "Students' actions", "Assessment", "Resources",
-            "min");
 }

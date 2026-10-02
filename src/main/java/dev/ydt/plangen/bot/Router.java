@@ -10,6 +10,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import java.util.Locale;
+import org.jboss.logging.Logger;
 
 /**
  * Callback data (max 64 bytes): prof:* / lang:xx / min:nn profile, cls:* classes, sch:day:n schedule,
@@ -31,6 +32,8 @@ public class Router {
             Раздел: ...
             Тема: ...
             Цели: коды и формулировки""";
+
+    private static final Logger LOG = Logger.getLogger(Router.class);
 
     @Inject
     Messenger bot;
@@ -65,6 +68,9 @@ public class Router {
         }
         String cmd = t.split("\\s+", 2)[0].toLowerCase(Locale.ROOT).replaceFirst("^/", "").replaceFirst("@.*$", "");
         boolean slash = t.startsWith("/");
+        if (slash) {
+            LOG.infof("route: user=%d command /%s", uid, cmd);
+        }
 
         if (slash) {
             switch (cmd) {
@@ -124,6 +130,7 @@ public class Router {
         }
 
         ConvState st = ConvState.get(uid);
+        LOG.infof("route: user=%d free text, state=%s", uid, st == null ? "none" : st.state);
         if (st == null) {
             Teacher teacher = Teacher.findById(uid);
             if (teacher == null || !teacher.isComplete()) {

@@ -1,21 +1,29 @@
 package dev.ydt.plangen.llm;
 
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import dev.langchain4j.model.output.structured.Description;
 import java.util.List;
 
-/** Structured answer expected from the model; the JSON schema is generated from these records. */
+/**
+ * Structured answer expected from the model; the JSON schema is generated from these records.
+ * Field names stay camelCase in JSON (the schema uses them), regardless of the global snake_case
+ * setting that Telegram payloads need.
+ */
+@JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
 public record LessonContent(
-        @Description("Lesson objectives for the group \"All learners will be able to\": 2-3 measurable basic-level objectives")
-        List<String> allLearners,
-        @Description("Lesson objectives for the group \"Most learners will be able to\": 2-3 advanced-level objectives")
-        List<String> mostLearners,
-        @Description("Lesson objectives for the group \"Some learners will be able to\": 2-3 high-level objectives")
-        List<String> someLearners,
-        @Description("Stages of the lesson procedure in order, from 4 to 6 stages")
+        @Description("Assessment criteria derived from the learning objectives and the topic: 2-4 short "
+                + "measurable statements of what a learner demonstrates")
+        List<String> assessmentCriteria,
+        @Description("Lesson objectives: 2-3 short sentences, each starting with a bare verb so that it continues "
+                + "\"Learners will be able to:\", e.g. \"Learn the affirmative and negative forms of the Present Simple\"")
+        List<String> lessonObjectives,
+        @Description("Exactly three stages in order: beginning, middle, end of the class")
         List<Stage> stages) {
 
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record Stage(
-            @Description("Stage name with the part of the lesson, e.g. \"Start of the lesson. Warm-up\"")
+            @Description("Stage name exactly as required by the plan language, e.g. \"Beginning of the class\"")
             String name,
             @Description("Length of the stage in minutes, an integer")
             int minutes,

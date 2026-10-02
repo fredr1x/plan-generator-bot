@@ -23,6 +23,7 @@ import jakarta.inject.Inject;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -393,6 +394,8 @@ public class PlanFlow {
             bot.send(chat, "На сегодня лимит планов исчерпан (" + dailyLimit + "). Попробуйте завтра.", null);
             return;
         }
+        LOG.infof("[plan] user=%d confirmed: date=%s classes=\"%s\" topic=\"%s\"", uid, d.date, labels(classes),
+                Kb.trunc(d.topic, 60));
         ConvState.clear(uid);
         Long placeholder = bot.send(chat, "⏳ Составляю план. Обычно это занимает 20–60 секунд…", null);
         Job job = new Job(uid, chat, placeholder, LocalDate.parse(d.date), t.subject, t.lang, t.lessonMinutes,
@@ -425,6 +428,8 @@ public class PlanFlow {
             bot.send(chat, "На сегодня лимит планов исчерпан (" + dailyLimit + ").", null);
             return;
         }
+        LOG.infof("[revision] user=%d plan #%d: %s", uid, recordId,
+                !editPrevious ? "another variant" : note == SHORTER_NOTE ? "shorter" : "more tasks");
         Long placeholder = bot.send(chat, progress, null);
         Job job = new Job(uid, chat, placeholder, r.planDate, t.subject, t.lang, t.lessonMinutes, t.school,
                 t.fullName, r.classes, r.students, r.section, r.topic, r.objectives, note,
@@ -469,6 +474,8 @@ public class PlanFlow {
         r.contentJson = src.contentJson;
         r.model = "copy";
         r.persist();
+        LOG.infof("[copy] user=%d plan #%d copied to #%d for \"%s\" on %s (no model call)", uid, src.id, r.id,
+                r.classes, r.planDate);
         ConvState.clear(uid);
         try {
             LessonContent content = mapper.readValue(r.contentJson, LessonContent.class);
@@ -516,12 +523,18 @@ public class PlanFlow {
     private void run(Job job) {
         var ctx = Arc.container().requestContext();
         ctx.activate();
+        long started = System.nanoTime();
         try {
-            LessonContent content = plans.generate(new PlanService.Request(job.subject(), job.lang(),
+            LOG.infof("[job] user=%d start: classes=\"%s\" topic=\"%s\" minutes=%d revision=%s", job.userId(),
+                    job.classes(), Kb.trunc(job.topic(), 60), job.minutes(), job.previousJson() != null);
+            PlanService.Generated g = plans.generate(new PlanService.Request(job.subject(), job.lang(),
                     job.minutes(), job.classes(), job.students(), job.section(), job.topic(), job.objectives(),
                     job.notes(), job.previousJson()));
+            LessonContent content = g.content();
             String json = mapper.writeValueAsString(content);
-            Long id = QuarkusTransaction.requiringNew().call(() -> {
+            Instant dayStart = time.startOf(time.today());
+            record Saved(Long id, long[] today) {}
+            Saved saved = QuarkusTransaction.requiringNew().call(() -> {
                 LessonPlanRecord r = new LessonPlanRecord();
                 r.teacherId = job.userId();
                 r.planDate = job.date();
@@ -532,20 +545,34 @@ public class PlanFlow {
                 r.objectives = job.objectives();
                 r.contentJson = json;
                 r.model = plans.model();
+                r.tokensIn = g.tokensIn();
+                r.tokensOut = g.tokensOut();
+                r.attempts = g.attempts();
+                r.millis = (int) g.millis();
                 r.persist();
-                return r.id;
+                return new Saved(r.id, LessonPlanRecord.usageSince(job.userId(), dayStart));
             });
+            Long id = saved.id();
+            long[] day = saved.today();
+            LOG.infof("[job] plan #%d saved: tokens in=%d out=%d (est. $%.4f), attempts=%d, model time %d ms",
+                    id, g.tokensIn(), g.tokensOut(), plans.estimateCost(g.tokensIn(), g.tokensOut()),
+                    g.attempts(), g.millis());
+            LOG.infof("[usage] today for user=%d: plans=%d, tokens in=%d out=%d, est. $%.4f (daily limit %d plans)",
+                    job.userId(), day[0], day[1], day[2], plans.estimateCost(day[1], day[2]), dailyLimit);
             if (job.placeholderId() != null) bot.delete(job.chatId(), job.placeholderId());
             boolean sent = sendDocx(job.chatId(), new PlanDocx.Data(job.lang(), job.school(), job.teacher(),
                     job.date(), job.classes(), job.students(), job.section(), job.topic(), job.objectives(),
                     content), id, job.topic());
+            LOG.infof("[job] user=%d finished in %d ms, document sent=%s", job.userId(),
+                    (System.nanoTime() - started) / 1_000_000, sent);
             if (sent) {
                 bot.send(job.chatId(), "Готово ✅ Прочитайте план перед уроком: ИИ может ошибаться.\n"
                         + "Можно сократить, добавить заданий, получить другой вариант или взять этот урок "
                         + "для другого класса.", actions(id));
             }
         } catch (Exception e) {
-            LOG.error("plan generation failed", e);
+            LOG.errorf(e, "[job] user=%d plan generation FAILED after %d ms", job.userId(),
+                    (System.nanoTime() - started) / 1_000_000);
             if (job.placeholderId() != null) {
                 bot.edit(job.chatId(), job.placeholderId(),
                         "Не получилось составить план. Попробуйте ещё раз через минуту: /plan", null);
@@ -563,7 +590,10 @@ public class PlanFlow {
             dir = Files.createTempDirectory("plan");
             Path file = dir.resolve("plan_" + data.date() + "_" + recordId + ".docx");
             PlanDocx.write(data, file);
-            return bot.sendDocument(chat, file.toFile(), "План урока: " + Kb.trunc(topic, 150));
+            long size = Files.size(file);
+            boolean sent = bot.sendDocument(chat, file.toFile(), "План урока: " + Kb.trunc(topic, 150));
+            LOG.infof("[docx] %s, %d bytes, sent to telegram=%s", file.getFileName(), size, sent);
+            return sent;
         } catch (IOException e) {
             LOG.error("docx failed", e);
             bot.send(chat, "Не удалось собрать файл.", null);

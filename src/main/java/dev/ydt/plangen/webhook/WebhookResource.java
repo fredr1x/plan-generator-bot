@@ -43,15 +43,22 @@ public class WebhookResource {
     public Response receive(@HeaderParam("X-Telegram-Bot-Api-Secret-Token") String token, Update update) {
         if (token == null || !MessageDigest.isEqual(
                 token.getBytes(StandardCharsets.UTF_8), secret.getBytes(StandardCharsets.UTF_8))) {
+            LOG.warn("webhook call rejected: wrong or missing secret token");
             return Response.status(Response.Status.FORBIDDEN).build();
         }
         Long from = update.fromId();
         if (from == null || !allowedIds.orElse(List.of()).contains(from)) {
+            LOG.warnf("update %d ignored: user %s is not in ALLOWED_IDS", update.updateId(), from);
             return Response.ok().build(); // closed bot: silently ignore strangers
         }
+        long started = System.nanoTime();
         try {
             if (dedup.firstTime(update.updateId())) {
+                LOG.infof("update %d <- user %d: %s", update.updateId(), from, describe(update));
                 router.handle(update);
+                LOG.infof("update %d handled in %d ms", update.updateId(), (System.nanoTime() - started) / 1_000_000);
+            } else {
+                LOG.infof("update %d ignored: duplicate delivery", update.updateId());
             }
         } catch (Exception e) {
             LOG.error("update " + update.updateId() + " failed", e);
@@ -62,5 +69,17 @@ public class WebhookResource {
         }
         // always 200: failures are logged, Telegram must not retry forever
         return Response.ok().build();
+    }
+
+    /** One-line summary for the log: callback data or the first characters of the text. */
+    private static String describe(Update u) {
+        if (u.callbackQuery() != null) {
+            return "button " + u.callbackQuery().data();
+        }
+        if (u.message() != null && u.message().text() != null) {
+            String t = u.message().text().replace('\n', ' ');
+            return "text \"" + (t.length() > 80 ? t.substring(0, 80) + "..." : t) + "\"";
+        }
+        return "other";
     }
 }
