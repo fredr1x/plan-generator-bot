@@ -1,0 +1,7 @@
+Extract the lessons from these table rows.
+
+Column header row: {header}
+Previous state: {previous}
+
+Rows:
+{rows}

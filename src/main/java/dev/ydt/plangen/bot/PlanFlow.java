@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.ydt.plangen.doc.FileNames;
 import dev.ydt.plangen.doc.PlanDocx;
 import dev.ydt.plangen.domain.ConvState;
+import dev.ydt.plangen.domain.KtpLesson;
+import dev.ydt.plangen.domain.KtpSlot;
 import dev.ydt.plangen.domain.LessonPlanRecord;
 import dev.ydt.plangen.domain.ScheduleEntry;
 import dev.ydt.plangen.domain.SchoolClass;
@@ -79,7 +81,7 @@ public class PlanFlow {
                        int minutes, String school, String teacher, String classes, int students,
                        String section, String topic, String objectives, String notes, String previousJson,
                        String bookRefs, String bookContext, List<BookService.Answer> bookAnswers,
-                       String classCounts) {}
+                       String classCounts, Long ktpLessonId, List<Long> slotIds) {}
 
     @Inject
     Messenger bot;
@@ -479,15 +481,41 @@ public class PlanFlow {
             bot.send(chat, "Не хватает данных. Начните заново: /plan", null);
             return;
         }
+        ConvState.clear(uid);
+        submit(uid, chat, d, slotsOf(d, classes));
+    }
+
+    /** The planned slots that this draft covers: same KTP lesson, same classes, same day. */
+    private List<Long> slotsOf(Draft d, List<SchoolClass> classes) {
+        if (d.ktpLessonId == null || d.date == null) return List.of();
+        return KtpSlot.<KtpSlot>list("lessonId = ?1 and slotDate = ?2 and classId in ?3 and status = 'planned'",
+                d.ktpLessonId, LocalDate.parse(d.date), classes.stream().map(c -> c.id).toList())
+                .stream().map(s -> s.id).toList();
+    }
+
+    /**
+     * Starts the background generation for a complete draft without touching the dialogue state: the evening
+     * preparation uses it too. The slots are marked as prepared when the plan is saved.
+     */
+    void submit(long uid, long chat, Draft d, List<Long> slotIds) {
+        Teacher t = Teacher.findById(uid);
+        List<SchoolClass> classes = classes(uid, d);
         LOG.infof("[plan] user=%d confirmed: date=%s classes=\"%s\" topic=\"%s\"", uid, d.date, labels(classes),
                 Kb.trunc(d.topic, 60));
-        ConvState.clear(uid);
-        Long placeholder = bot.send(chat, "⏳ Составляю план. Обычно это занимает 20–60 секунд…", null);
+        Long placeholder = bot.send(chat, "⏳ Составляю план «" + Kb.trunc(d.topic, 50)
+                + "». Обычно это занимает 20–60 секунд…", null);
+        String notes = LessonKinds.withKindNote(d.notes, d.ktpLessonId);
         Job job = new Job(uid, chat, placeholder, LocalDate.parse(d.date), t.subject, t.lang, t.lessonMinutes,
                 t.school, t.fullName, labels(classes), classes.stream().mapToInt(c -> c.studentCount).sum(),
-                d.section, d.topic, d.objectives, d.notes, null, bookFlow.toJson(d.books),
-                bookFlow.contextFor(d.books), bookFlow.answersFor(d.books), countsOf(classes));
+                d.section, d.topic, d.objectives, notes, null, bookFlow.toJson(d.books),
+                bookFlow.contextFor(d.books), bookFlow.answersFor(d.books), countsOf(classes), d.ktpLessonId,
+                slotIds);
         exec.submit(() -> run(job));
+    }
+
+    /** Shows the check screen for a draft that was filled in by the program (evening suggestions). */
+    void review(long uid, long chat, Draft d) {
+        confirm(uid, chat, d);
     }
 
     /** Fresh variant of an existing plan: same input, different activities. */
@@ -516,7 +544,7 @@ public class PlanFlow {
         Job job = new Job(uid, chat, placeholder, r.planDate, t.subject, t.lang, t.lessonMinutes, t.school,
                 t.fullName, r.classes, r.students, r.section, r.topic, r.objectives, note,
                 editPrevious ? r.contentJson : null, r.bookRefs, bookFlow.contextFor(bookFlow.fromJson(r.bookRefs)),
-                bookFlow.answersFor(bookFlow.fromJson(r.bookRefs)), countsFor(r));
+                bookFlow.answersFor(bookFlow.fromJson(r.bookRefs)), countsFor(r), null, List.of());
         exec.submit(() -> run(job));
     }
 
@@ -640,6 +668,13 @@ public class PlanFlow {
                 r.attempts = g.attempts();
                 r.millis = (int) g.millis();
                 r.persist();
+                if (!job.slotIds().isEmpty()) {
+                    KtpSlot.update("status = 'prepared', planId = ?1 where id in ?2", r.id, job.slotIds());
+                }
+                if (job.ktpLessonId() != null && job.bookRefs() != null) {
+                    // the pages are chosen once per KTP lesson: the next time they are taken from here
+                    KtpLesson.update("bookRefs = ?1 where id = ?2", job.bookRefs(), job.ktpLessonId());
+                }
                 return new Saved(r.id, LessonPlanRecord.usageSince(job.userId(), dayStart));
             });
             Long id = saved.id();

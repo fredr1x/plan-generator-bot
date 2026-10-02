@@ -190,6 +190,23 @@ public class BookFlow {
         return sb.toString();
     }
 
+    /**
+     * Pages for a KTP lesson without asking: the ones confirmed earlier for this lesson, otherwise the best match
+     * by topic in one book of each type that the classes use. Empty when no loaded book fits.
+     */
+    List<BookRef> autoPick(dev.ydt.plangen.domain.KtpLesson lesson, List<SchoolClass> classes, LocalDate date) {
+        List<BookRef> cached = fromJson(lesson.bookRefs);
+        if (!cached.isEmpty()) return cached;
+        List<BookRef> out = new ArrayList<>();
+        Set<String> types = new HashSet<>();
+        for (Book b : candidates(new Draft(), classes, date)) {
+            if (!types.add(String.valueOf(b.bookType))) continue;
+            var found = books.suggest(b.id, lesson.topic, lesson.objectives);
+            if (!found.isEmpty()) out.add(new BookRef(b.id, found.get(0).spec()));
+        }
+        return out;
+    }
+
     /** The prompt block for the model, or null when there are no books or none of the pages is loaded. */
     String contextFor(List<BookRef> refs) {
         if (refs == null || refs.isEmpty()) {

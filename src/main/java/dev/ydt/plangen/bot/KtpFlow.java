@@ -8,9 +8,11 @@ import dev.ydt.plangen.domain.ConvState;
 import dev.ydt.plangen.domain.Ktp;
 import dev.ydt.plangen.domain.KtpClass;
 import dev.ydt.plangen.domain.KtpLesson;
+import dev.ydt.plangen.domain.KtpSlot;
 import dev.ydt.plangen.domain.KtpTerm;
 import dev.ydt.plangen.domain.SchoolClass;
 import dev.ydt.plangen.domain.Teacher;
+import dev.ydt.plangen.ktp.KtpAiParser;
 import dev.ydt.plangen.ktp.KtpParser;
 import dev.ydt.plangen.ktp.KtpParser.Mapping;
 import dev.ydt.plangen.ktp.KtpParser.Outcome;
@@ -18,12 +20,21 @@ import dev.ydt.plangen.ktp.KtpParser.Parsed;
 import dev.ydt.plangen.ktp.KtpReader;
 import dev.ydt.plangen.ktp.KtpReader.RawDoc;
 import dev.ydt.plangen.service.KtpService;
+import dev.ydt.plangen.service.SlotService;
+import dev.ydt.plangen.service.TimeService;
+import dev.ydt.plangen.domain.SchoolTerm;
 import dev.ydt.plangen.service.KtpService.UnitInfo;
 import dev.ydt.plangen.telegram.Dto.Document;
 import dev.ydt.plangen.telegram.Messenger;
+import io.quarkus.arc.Arc;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.io.IOException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -48,6 +59,7 @@ public class KtpFlow {
     static final String KTP_REVIEW = "KTP_REVIEW";
     static final String KTP_CLASSES = "KTP_CLASSES";
     static final String KTP_EDIT = "KTP_EDIT";
+    static final String KTP_START = "KTP_START";
 
     private static final long MAX_FILE = 10L * 1024 * 1024;
     private static final Pattern MAP_ITEM = Pattern.compile(
@@ -60,8 +72,10 @@ public class KtpFlow {
         public Parsed parsed;
         public Integer grade;
         public List<Long> classIds = new ArrayList<>();
-        /** Only while the columns are asked: the raw table. */
+        /** The raw table: kept so that the columns can be asked and the plain parser can be tried instead. */
         public RawDoc raw;
+        /** True when the lessons were read by the model (and checked against the file). */
+        public boolean viaAi;
     }
 
     @Inject
@@ -72,6 +86,21 @@ public class KtpFlow {
 
     @Inject
     ObjectMapper mapper;
+
+    @Inject
+    KtpAiParser aiParser;
+
+    @Inject
+    SlotService slots;
+
+    @Inject
+    TimeService time;
+
+    /** KTP_USE_AI=false switches the model off (the plain parser is used). */
+    @ConfigProperty(name = "app.ktp.use-ai", defaultValue = "true")
+    boolean useAi;
+
+    private final ExecutorService exec = Executors.newVirtualThreadPerTaskExecutor();
 
     // ------------------------------------------------------------------ entry points
 
@@ -94,6 +123,7 @@ public class KtpFlow {
                     .filter(c -> c != null).map(SchoolClass::label).collect(Collectors.joining(", "));
             sb.append(classes.isEmpty() ? "\n  классы не привязаны" : "\n  классы: " + classes);
             rows.add(btn("📋 Юниты и темы · " + k.grade + " класс", "ktp:units:" + k.id));
+            rows.add(btn("📅 Даты уроков", "ktp:dates:" + k.id));
             rows.add(btn("✏️ Исправить урок", "ktp:edit:" + k.id), btn("🗑 Удалить", "ktp:del:" + k.id));
         }
         rows.add(btn("➕ Загрузить КТП", "ktp:new"));
@@ -136,19 +166,60 @@ public class KtpFlow {
                     + "\nПроверьте, что это Word-файл с таблицей КТП.", null);
             return;
         }
+        // the plain code parse: the cross-check for the model, and the fallback when the model is not used
         Outcome o = KtpParser.parse(raw, null);
         LOG.infof("[ktp] user=%d file=\"%s\": %d table rows, columns %s", uid, fileName, raw.rows().size(),
                 o.needMapping() ? "NOT recognised" : "recognised");
         Import d = new Import();
         d.fileName = fileName;
+        d.raw = raw;
+        if (useAi) {
+            Long placeholder = bot.send(chat, "⏳ Читаю КТП с помощью ИИ, это займёт около минуты…", null);
+            Parsed det = o.needMapping() ? null : o.parsed();
+            exec.submit(() -> runAi(uid, chat, placeholder, d, det));
+            return;
+        }
         if (o.needMapping()) {
-            d.raw = raw;
             save(uid, KTP_MAP, d);
             bot.send(chat, mappingQuestion(o.preview()), null);
             return;
         }
         d.parsed = o.parsed();
         review(uid, chat, d);
+    }
+
+    /** Runs on its own thread: the model call can take a minute, no DB transaction is open during it. */
+    private void runAi(long uid, long chat, Long placeholder, Import d, Parsed det) {
+        var ctx = Arc.container().requestContext();
+        ctx.activate();
+        try {
+            Parsed result = null;
+            try {
+                result = aiParser.parse(d.raw, det).parsed();
+                d.viaAi = true;
+            } catch (RuntimeException e) {
+                LOG.errorf(e, "[ktp-ai] user=%d the model could not read the KTP", uid);
+            }
+            final Parsed shown = result;
+            QuarkusTransaction.requiringNew().run(() -> {
+                if (placeholder != null) bot.delete(chat, placeholder);
+                if (shown != null) {
+                    d.parsed = shown;
+                    review(uid, chat, d);
+                } else if (det != null) {
+                    det.warnings.add(0, "ИИ сейчас недоступен, разобрал файл без него.");
+                    d.parsed = det;
+                    d.viaAi = false;
+                    review(uid, chat, d);
+                } else {
+                    save(uid, KTP_MAP, d);
+                    bot.send(chat, "ИИ сейчас недоступен.\n" + mappingQuestion(KtpParser.parse(d.raw, null).preview()),
+                            null);
+                }
+            });
+        } finally {
+            ctx.terminate();
+        }
     }
 
     // ------------------------------------------------------------------ text
@@ -167,6 +238,21 @@ public class KtpFlow {
                 review(uid, chat, d);
             }
             case KTP_EDIT -> onEdit(uid, chat, st, text);
+            case KTP_START -> {
+                Ktp k = st.payload == null ? null : ownedKtp(uid, Long.parseLong(st.payload));
+                String t = text.strip();
+                if (k == null || !t.matches("\\d{1,3}")) {
+                    bot.send(chat, "Напишите номер урока числом, например 12.", null);
+                    return;
+                }
+                int n = Integer.parseInt(t);
+                if (n < 1 || n > KtpLesson.count("ktpId", k.id)) {
+                    bot.send(chat, "В этом КТП уроки с 1 по " + KtpLesson.count("ktpId", k.id) + ".", null);
+                    return;
+                }
+                ConvState.clear(uid);
+                buildDates(uid, chat, k, n);
+            }
             default -> bot.send(chat, "Нажмите одну из кнопок выше или /cancel.", null);
         }
     }
@@ -266,11 +352,15 @@ public class KtpFlow {
         }
         long existing = Ktp.count("teacherId = ?1 and grade = ?2", uid, d.grade);
         if (existing > 0) sb.append("\n\nЭто заменит ваш сохранённый КТП ").append(d.grade).append(" класса.");
+        sb.append("\n\nРазобрано: ").append(d.viaAi ? "с помощью ИИ, тексты сверены с файлом" : "без ИИ (кодом)");
         save(uid, KTP_REVIEW, d);
-        bot.send(chat, sb.toString(), Kb.rows()
+        Kb.Rows buttons = Kb.rows()
                 .add(btn("✅ Верно, сохранить", "ktp:ok"))
-                .add(btn("📋 Показать юниты", "ktp:preview"), btn("✖ Отмена", "ktp:cancel"))
-                .build());
+                .add(btn("📋 Показать юниты", "ktp:preview"), btn("✖ Отмена", "ktp:cancel"));
+        if (d.viaAi && d.raw != null) {
+            buttons.add(btn("🔁 Разобрать без ИИ", "ktp:code"));
+        }
+        bot.send(chat, sb.toString(), buttons.build());
     }
 
     private void askClasses(long uid, long chat, Long editMsg, Import d) {
@@ -300,6 +390,39 @@ public class KtpFlow {
                 + " часов, классов: " + d.classIds.size() + ".\n"
                 + "Теперь в /plan можно взять урок прямо из КТП: выберите класс, и бот предложит юнит и тему.",
                 Kb.row(btn("📋 Юниты и темы", "ktp:units:" + k.id)));
+        if (!d.classIds.isEmpty()) {
+            askStart(uid, chat, k);
+        }
+    }
+
+    /** Dates need a starting point: from the first lesson in a new year, or from the lesson the class is at now. */
+    private void askStart(long uid, long chat, Ktp k) {
+        LocalDate today = time.today();
+        List<SchoolTerm> terms = SchoolTerm.all();
+        boolean midYear = !terms.isEmpty() && terms.get(0).startsOn.isBefore(today)
+                && !terms.get(terms.size() - 1).endsOn.isBefore(today);
+        if (!midYear) {
+            buildDates(uid, chat, k, 1);
+            return;
+        }
+        ConvState.set(uid, KTP_START, String.valueOf(k.id));
+        bot.send(chat, "📅 Расставляю даты уроков по расписанию и календарю. Учебный год уже идёт: какой по счёту "
+                + "урок КТП у вас следующий? Напишите номер (1–" + KtpLesson.count("ktpId", k.id) + ").",
+                Kb.row(btn("С первого урока", "ktp:start:" + k.id + ":1")));
+    }
+
+    /** Places the lessons of the KTP on dates for every class that follows it, starting from startSeq. */
+    private void buildDates(long uid, long chat, Ktp k, int startSeq) {
+        StringBuilder sb = new StringBuilder();
+        for (KtpClass link : KtpClass.ofKtp(k.id)) {
+            SchoolClass c = SchoolClass.findById(link.classId);
+            if (c == null) continue;
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append(SlotService.describe(new SlotService.Built(k, c, slots.build(k, c, startSeq))));
+        }
+        if (sb.length() == 0) sb.append("К КТП не привязан ни один класс: добавьте их в /classes и загрузите КТП "
+                + "снова.");
+        bot.send(chat, sb + "\n\nПосмотреть: /week, предложение на завтра: /tomorrow.", null);
     }
 
     // ------------------------------------------------------------------ callbacks
@@ -313,6 +436,25 @@ public class KtpFlow {
             case "list" -> {
                 bot.answer(cbId, null);
                 start(uid, chat);
+            }
+            case "dates" -> {
+                bot.answer(cbId, null);
+                Ktp k = ownedKtp(uid, Long.parseLong(p[2]));
+                if (k == null) return;
+                if (KtpSlot.count("ktpId", k.id) > 0) {
+                    var built = slots.rebuildAll(uid);
+                    bot.send(chat, built.isEmpty() ? "Нечего пересчитывать." : "Пересчитал даты.\n\n"
+                            + SlotService.describeAll(built), null);
+                } else {
+                    askStart(uid, chat, k);
+                }
+            }
+            case "start" -> {
+                bot.answer(cbId, null);
+                Ktp k = ownedKtp(uid, Long.parseLong(p[2]));
+                if (k == null) return;
+                ConvState.clear(uid);
+                buildDates(uid, chat, k, Integer.parseInt(p[3]));
             }
             case "cancel" -> {
                 bot.answer(cbId, "Отменено");
@@ -328,6 +470,22 @@ public class KtpFlow {
                 }
                 bot.send(chat, unitsText(KtpService.units(d.parsed.lessons.stream().map(l -> l.unit).toList()),
                         d.parsed.lessons.size()), null);
+            }
+            case "code" -> {
+                bot.answer(cbId, null);
+                Import d = read(ConvState.get(uid));
+                if (d == null || d.raw == null) {
+                    bot.send(chat, "Сессия устарела, начните заново: /ktp", null);
+                    return;
+                }
+                Outcome o = KtpParser.parse(d.raw, null);
+                if (o.needMapping() || o.parsed() == null) {
+                    bot.send(chat, "Кодом колонки распознать не удалось, оставляю разбор ИИ.", null);
+                    return;
+                }
+                d.parsed = o.parsed();
+                d.viaAi = false;
+                review(uid, chat, d);
             }
             case "ok" -> {
                 bot.answer(cbId, null);

@@ -310,7 +310,41 @@ public final class KtpParser {
         return s.replaceAll("^[\\s;,.:–-]+|[\\s;,:–-]+$", "").strip();
     }
 
-    static String kindOf(String topic) {
+    /** Row index of the header (the row that names the columns), or -1. */
+    public static int headerRowIndex(List<List<String>> rows) {
+        Object[] found = detectHeader(rows);
+        return found == null ? -1 : (int) found[0];
+    }
+
+    /** Column of the lesson number in the header row, or -1 when it is unknown. */
+    public static int numberColumn(List<List<String>> rows) {
+        Object[] found = detectHeader(rows);
+        return found == null ? -1 : ((Mapping) found[1]).number();
+    }
+
+    /** Title, grade and school year from the lines above the table. */
+    public static void readMeta(RawDoc doc, Parsed out) {
+        readTitle(doc, out);
+    }
+
+    /** The checks that need all lessons: hours and totals against the file (adds warnings). */
+    public static void finish(Parsed out, int blankHours) {
+        validate(out, blankHours);
+    }
+
+    /** "4. 1. 1. 1." or "4.1.1.1" into "4.1.1.1"; the input itself when it is not a code. */
+    public static String normCode(String s) {
+        if (s == null) return "";
+        Matcher m = CODE.matcher(s);
+        return m.find() ? m.group(1) + "." + m.group(2) + "." + m.group(3) + "." + m.group(4) : s.strip();
+    }
+
+    /** ISO date from a cell like 05.10.2026 or 2026-10-05, null otherwise. */
+    public static String isoDate(String s) {
+        return parseDate(s);
+    }
+
+    public static String kindOf(String topic) {
         String t = topic.toLowerCase(Locale.ROOT);
         if (t.contains("interim")) return "interim";
         if (t.contains("checkpoint") || t.contains("check point") || t.contains("summative")

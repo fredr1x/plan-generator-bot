@@ -25,7 +25,11 @@ public class Router {
             /classes — мои классы
             /schedule — расписание
             /books — каталог книг: добавить по ссылке okulyk.kz, привязать к классам
-            /ktp — КТП: загрузить файл Word, посмотреть юниты и темы
+            /ktp — КТП: загрузить файл Word, посмотреть юниты и темы, расставить даты
+            /week — уроки недели по КТП и готовность планов
+            /tomorrow — предложение планов на ближайший учебный день
+            /calendar — четверти, каникулы, выходные (свои можно добавить)
+            /settings — вечерняя подготовка: время и режим
             /history — прошлые планы
             /profile — Ф.И.О., школа, предмет, язык, длительность урока
             /cancel — отменить текущий ввод
@@ -57,6 +61,15 @@ public class Router {
 
     @Inject
     KtpFlow ktp;
+
+    @Inject
+    EveningFlow evening;
+
+    @Inject
+    CalendarFlow calendar;
+
+    @Inject
+    SettingsFlow settings;
 
     @Transactional
     public void handle(Update u) {
@@ -145,6 +158,26 @@ public class Router {
                     ktp.start(uid, chat);
                     return;
                 }
+                case "week" -> {
+                    ConvState.clear(uid);
+                    evening.week(uid, chat);
+                    return;
+                }
+                case "tomorrow" -> {
+                    ConvState.clear(uid);
+                    evening.tomorrow(uid, chat);
+                    return;
+                }
+                case "calendar" -> {
+                    ConvState.clear(uid);
+                    calendar.show(uid, chat);
+                    return;
+                }
+                case "settings" -> {
+                    ConvState.clear(uid);
+                    settings.show(uid, chat, null);
+                    return;
+                }
                 case "history" -> {
                     ConvState.clear(uid);
                     plan.history(uid, chat);
@@ -185,6 +218,8 @@ public class Router {
             catalog.onText(uid, chat, st, t);
         } else if (st.state.startsWith("KTP_")) {
             ktp.onText(uid, chat, st, t);
+        } else if (st.state.startsWith("CAL_")) {
+            calendar.onText(uid, chat, st, t);
         }
     }
 
@@ -204,6 +239,9 @@ public class Router {
                 case "pl" -> plan.onCallback(uid, chat, msg, cb.id(), p);
                 case "cat" -> catalog.onCallback(uid, chat, msg, cb.id(), p);
                 case "ktp" -> ktp.onCallback(uid, chat, msg, cb.id(), p);
+                case "ev" -> evening.onCallback(uid, chat, msg, cb.id(), p);
+                case "cal" -> calendar.onCallback(uid, chat, msg, cb.id(), p);
+                case "set" -> settings.onCallback(uid, chat, msg, cb.id(), p);
                 default -> bot.answer(cb.id(), null);
             }
         } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {

@@ -5,6 +5,7 @@ import static dev.ydt.plangen.bot.Kb.btn;
 import dev.ydt.plangen.domain.ConvState;
 import dev.ydt.plangen.domain.ScheduleEntry;
 import dev.ydt.plangen.domain.SchoolClass;
+import dev.ydt.plangen.service.SlotService;
 import dev.ydt.plangen.telegram.Dto.InlineButton;
 import dev.ydt.plangen.telegram.Messenger;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -30,6 +31,9 @@ public class ScheduleFlow {
 
     @Inject
     Messenger bot;
+
+    @Inject
+    SlotService slots;
 
     public void show(long uid, long chat) {
         List<ScheduleEntry> entries = ScheduleEntry.forTeacher(uid);
@@ -127,6 +131,11 @@ public class ScheduleFlow {
             bot.send(chat, "Есть замечания:\n" + String.join("\n", problems), null);
         }
         show(uid, chat);
+        var built = slots.rebuildAll(uid); // lessons of the KTP move together with the timetable
+        if (!built.isEmpty()) {
+            bot.send(chat, "Расписание изменилось, пересчитал даты уроков по КТП.\n\n"
+                    + SlotService.describeAll(built), null);
+        }
     }
 
     // ---------- helpers shared with the plan flow ----------

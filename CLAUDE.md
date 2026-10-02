@@ -34,10 +34,13 @@ Quarkus 3 / Java 21, Postgres (Neon) + Flyway, OpenAI через Quarkus LangCha
 
 ## КТП
 
+- КТП читает **модель**: `ktp/KtpAiParser` + `KtpModel` (LangChain4j, схема `KtpChunk`, промпты `prompts/ktp-*.txt` на английском, дословное копирование). Тексты из ответа проверяются по тексту файла, а обычный разбор кодом (`KtpParser`) служит проверкой и запасным вариантом. Любые правки промпта и проверок проверять без платных вызовов (поддельная модель), платный прогон только с разрешения пользователя.
 - `ktp/KtpReader` читает `.docx` (XWPF) и старый `.doc` (HWPF, `poi-scratchpad`), `ktp/KtpParser` разбирает таблицу по общим колонкам (номер, тема, цели, часы, дата, юнит необязателен). Структура КТП у учителей разная: не завязываться на позиции колонок, добавлять синонимы заголовков в списки `NUMBER/HOURS/DATE/OBJECTIVES/UNIT/TOPIC`. Если колонки не распознаны, `KtpFlow` спрашивает номера колонок у учителя (без платных вызовов).
 - Таблицы `ktps`, `ktp_terms`, `ktp_lessons`, `ktp_classes` (V7). Сохранение заменяет КТП того же класса. `bot/KtpFlow`: /ktp, проверка, выбор классов, юниты и темы, правка урока, выбор урока внутри /plan (`pl:ku`, `pl:kl`).
 - Файл из Telegram скачивается в `Messenger.download`; только в dev-профиле id вида `local:C:/path/file.doc` читает локальный файл (так проверяется импорт без Telegram).
-- Дальше по плану (`ktp-plan.md`): календарь и выходные, даты по расписанию, вечерняя подготовка.
+- Даты и календарь (V8): `service/SlotService` кладёт уроки КТП в слоты (расписание класса × четверти `school_terms` × без `non_teaching_days`), таблица `ktp_slots` (planned / prepared / done / skipped). Пересчёт идёт только вперёд от сегодня; prepared, done и прошедшие слоты не двигаются. Пересчёт запускают `/calendar`, `/schedule`, кнопка «Даты уроков», «Урок не состоялся».
+- `bot/EveningFlow` (/tomorrow, /week, кнопки `ev:*`), `bot/CalendarFlow` (`cal:*`), `bot/SettingsFlow` (`set:*`), `bot/EveningJob` (свой `ScheduledExecutorService`, без расширения quarkus-scheduler; идемпотентность через `scheduler_runs`). `PlanFlow.submit` запускает генерацию без изменения `conv_state` и помечает слоты prepared; подбор страниц книги `BookFlow.autoPick`, кэш в `ktp_lessons.book_refs`; указания для особых уроков `bot/LessonKinds`.
+- Проверять эти потоки локально можно без платных вызовов: dev-сервер с `-Dapp.ktp.use-ai=false` и `-Dquarkus.rest-client.telegram.url=http://localhost:<порт>` (поддельный Telegram). Кнопку «Составить все» и режим «автомат» в такой проверке не нажимать: они вызывают OpenAI.
 
 ## Конфиг (env)
 
