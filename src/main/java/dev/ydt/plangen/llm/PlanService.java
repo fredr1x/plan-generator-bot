@@ -140,9 +140,6 @@ public class PlanService {
         if (isEmpty(c.lessonObjectives())) {
             return "lessonObjectives is empty. Write 2-3 lesson objectives.";
         }
-        if (isEmpty(c.assessmentCriteria())) {
-            return "assessmentCriteria is empty. Write 2-4 assessment criteria.";
-        }
         for (Stage s : c.stages()) {
             if (blank(s.name()) || blank(s.teacherActions()) || blank(s.studentActions()) || blank(s.assessment())
                     || blank(s.resources()) || s.minutes() < 1) {
@@ -169,7 +166,7 @@ public class PlanService {
             stages.set(idx, new Stage(big.name(), Math.max(1, big.minutes() + delta), big.teacherActions(),
                     big.studentActions(), big.assessment(), big.resources()));
         }
-        return new LessonContent(cleanItems(c.assessmentCriteria()), cleanItems(c.lessonObjectives()), stages);
+        return new LessonContent(cleanItems(c.lessonObjectives()), stages);
     }
 
     private static List<String> cleanItems(List<String> in) {

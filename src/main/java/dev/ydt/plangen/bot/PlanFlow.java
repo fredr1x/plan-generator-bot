@@ -4,6 +4,7 @@ import static dev.ydt.plangen.bot.Kb.btn;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.ydt.plangen.doc.FileNames;
 import dev.ydt.plangen.doc.PlanDocx;
 import dev.ydt.plangen.domain.ConvState;
 import dev.ydt.plangen.domain.LessonPlanRecord;
@@ -32,7 +33,6 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 /**
@@ -87,9 +87,6 @@ public class PlanFlow {
 
     @Inject
     ObjectMapper mapper;
-
-    @ConfigProperty(name = "app.limits.daily-plans")
-    int dailyLimit;
 
     private final ExecutorService exec = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -390,10 +387,6 @@ public class PlanFlow {
             bot.send(chat, "Не хватает данных. Начните заново: /plan", null);
             return;
         }
-        if (LessonPlanRecord.countSince(uid, time.startOf(time.today())) >= dailyLimit) {
-            bot.send(chat, "На сегодня лимит планов исчерпан (" + dailyLimit + "). Попробуйте завтра.", null);
-            return;
-        }
         LOG.infof("[plan] user=%d confirmed: date=%s classes=\"%s\" topic=\"%s\"", uid, d.date, labels(classes),
                 Kb.trunc(d.topic, 60));
         ConvState.clear(uid);
@@ -422,10 +415,6 @@ public class PlanFlow {
         Teacher t = Teacher.findById(uid);
         if (r == null || r.teacherId != uid || t == null) {
             bot.send(chat, "План не найден.", null);
-            return;
-        }
-        if (LessonPlanRecord.countSince(uid, time.startOf(time.today())) >= dailyLimit) {
-            bot.send(chat, "На сегодня лимит планов исчерпан (" + dailyLimit + ").", null);
             return;
         }
         LOG.infof("[revision] user=%d plan #%d: %s", uid, recordId,
@@ -557,8 +546,8 @@ public class PlanFlow {
             LOG.infof("[job] plan #%d saved: tokens in=%d out=%d (est. $%.4f), attempts=%d, model time %d ms",
                     id, g.tokensIn(), g.tokensOut(), plans.estimateCost(g.tokensIn(), g.tokensOut()),
                     g.attempts(), g.millis());
-            LOG.infof("[usage] today for user=%d: plans=%d, tokens in=%d out=%d, est. $%.4f (daily limit %d plans)",
-                    job.userId(), day[0], day[1], day[2], plans.estimateCost(day[1], day[2]), dailyLimit);
+            LOG.infof("[usage] today for user=%d: plans=%d, tokens in=%d out=%d, est. $%.4f",
+                    job.userId(), day[0], day[1], day[2], plans.estimateCost(day[1], day[2]));
             if (job.placeholderId() != null) bot.delete(job.chatId(), job.placeholderId());
             boolean sent = sendDocx(job.chatId(), new PlanDocx.Data(job.lang(), job.school(), job.teacher(),
                     job.date(), job.classes(), job.students(), job.section(), job.topic(), job.objectives(),
@@ -588,7 +577,7 @@ public class PlanFlow {
         Path dir = null;
         try {
             dir = Files.createTempDirectory("plan");
-            Path file = dir.resolve("plan_" + data.date() + "_" + recordId + ".docx");
+            Path file = dir.resolve(FileNames.docx(data.date(), data.classes(), data.topic()));
             PlanDocx.write(data, file);
             long size = Files.size(file);
             boolean sent = bot.sendDocument(chat, file.toFile(), "План урока: " + Kb.trunc(topic, 150));

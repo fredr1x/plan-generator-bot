@@ -12,9 +12,6 @@ import java.util.List;
  */
 @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
 public record LessonContent(
-        @Description("Assessment criteria derived from the learning objectives and the topic: 2-4 short "
-                + "measurable statements of what a learner demonstrates")
-        List<String> assessmentCriteria,
         @Description("Lesson objectives: 2-3 short sentences, each starting with a bare verb so that it continues "
                 + "\"Learners will be able to:\", e.g. \"Learn the affirmative and negative forms of the Present Simple\"")
         List<String> lessonObjectives,
@@ -23,7 +20,7 @@ public record LessonContent(
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record Stage(
-            @Description("Stage name exactly as required by the plan language, e.g. \"Beginning of the class\"")
+            @Description("Stage name, exactly one of: \"Beginning of the class\", \"Middle of the class\", \"End of the class\"")
             String name,
             @Description("Length of the stage in minutes, an integer")
             int minutes,

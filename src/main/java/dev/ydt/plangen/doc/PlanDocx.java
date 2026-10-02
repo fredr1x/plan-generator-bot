@@ -41,6 +41,7 @@ public final class PlanDocx {
     private static final int[] HEADER_COLS = {3100, 3900, 3205};          // total 10205 twips (18 cm)
     private static final int[] STAGE_COLS = {1500, 2900, 2800, 1700, 1305};
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+    private static final String[] STAGE_NAMES = {"Beginning of the class", "Middle of the class", "End of the class"};
 
     private PlanDocx() {}
 
@@ -84,7 +85,7 @@ public final class PlanDocx {
     // ---------- header grid ----------
 
     private static void header(XWPFDocument doc, Labels l, Data d) {
-        XWPFTable t = table(doc, 7, HEADER_COLS);
+        XWPFTable t = table(doc, 6, HEADER_COLS);
 
         // row 0: section | school (span 2)
         labelled(t.getRow(0).getCell(0), l.section(), d.section());
@@ -109,17 +110,9 @@ public final class PlanDocx {
         label(t.getRow(4).getCell(0), l.learningObjectives());
         text(span(t.getRow(4), 1, HEADER_COLS), d.objectives(), false);
 
-        // row 5: the same caption with "(assessment criteria)" underneath, criteria derived from the objectives
-        XWPFTableCell crit = t.getRow(5).getCell(0);
-        label(crit, l.learningObjectives());
-        XWPFParagraph hint = crit.addParagraph();
-        hint.setSpacingAfter(0);
-        run(hint, l.assessmentCriteriaHint(), false, SIZE);
-        dashed(span(t.getRow(5), 1, HEADER_COLS), null, d.content().assessmentCriteria());
-
-        // row 6: lesson objectives, one heading and short dashed sentences
-        label(t.getRow(6).getCell(0), l.lessonObjectives());
-        dashed(span(t.getRow(6), 1, HEADER_COLS), l.learnersWillBeAble(), d.content().lessonObjectives());
+        // row 5: lesson objectives, one heading and short dashed sentences
+        label(t.getRow(5).getCell(0), l.lessonObjectives());
+        dashed(span(t.getRow(5), 1, HEADER_COLS), l.learnersWillBeAble(), d.content().lessonObjectives());
     }
 
     /** Optional bold heading, then one "- item" paragraph per item. */
@@ -155,18 +148,16 @@ public final class PlanDocx {
             p.setAlignment(ParagraphAlignment.CENTER);
             run(p, heads[i], true, SIZE);
         }
-        int from = 0;
         for (int i = 0; i < stages.size(); i++) {
             Stage s = stages.get(i);
-            int to = from + s.minutes();
             XWPFTableRow row = t.getRow(i + 1);
-            text(row.getCell(0), (s.name() == null ? "" : s.name()) + "\n(" + from + "–" + to + " " + l.minutes() + ")",
-                    false);
+            // always English here: "Beginning of the class 10 min" (how long the stage takes, not an interval)
+            String name = stages.size() == STAGE_NAMES.length ? STAGE_NAMES[i] : (s.name() == null ? "" : s.name());
+            text(row.getCell(0), name + " " + s.minutes() + " min", false);
             text(row.getCell(1), s.teacherActions(), false);
             text(row.getCell(2), s.studentActions(), false);
             text(row.getCell(3), s.assessment(), false);
             text(row.getCell(4), s.resources(), false);
-            from = to;
         }
     }
 
