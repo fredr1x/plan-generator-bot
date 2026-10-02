@@ -75,6 +75,12 @@
             <artifactId>poi-ooxml</artifactId>
             <version>5.4.1</version>
         </dependency>
+        <!-- HWPF: reads the old binary .doc files that many teachers still use for the KTP -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-scratchpad</artifactId>
+            <version>5.4.1</version>
+        </dependency>
         <!-- POI logs through the Log4j 2 API; route it into the Quarkus (JBoss) logging instead of the
              "Log4j API could not find a logging provider" error -->
         <dependency>

@@ -15,6 +15,9 @@ public class Draft {
     public String notes;
     /** Set when the teacher reuses a finished lesson for another class or date. */
     public Long sourcePlanId;
+    /** KTP step: asked once; ktpLessonId is the KTP lesson the section, topic and objectives were taken from. */
+    public boolean ktpAsked;
+    public Long ktpLessonId;
     /** Textbook step: asked once; the lists stay empty when the teacher skipped it. */
     public boolean bookAsked;
     /** Books with their pages, in the order they were added (student's book first, workbook after it). */

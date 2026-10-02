@@ -3,6 +3,8 @@ package dev.ydt.plangen.telegram;
 import dev.ydt.plangen.telegram.Dto.AnswerCallback;
 import dev.ydt.plangen.telegram.Dto.DeleteMessage;
 import dev.ydt.plangen.telegram.Dto.EditMessage;
+import dev.ydt.plangen.telegram.Dto.FileResult;
+import dev.ydt.plangen.telegram.Dto.GetFile;
 import dev.ydt.plangen.telegram.Dto.SendMessage;
 import dev.ydt.plangen.telegram.Dto.SendResult;
 import dev.ydt.plangen.telegram.Dto.SetMyCommands;
@@ -39,6 +41,11 @@ public interface TelegramClient {
     @Path("answerCallbackQuery")
     @Consumes(MediaType.APPLICATION_JSON)
     void answerCallbackQuery(AnswerCallback body);
+
+    @POST
+    @Path("getFile")
+    @Consumes(MediaType.APPLICATION_JSON)
+    FileResult getFile(GetFile body);
 
     @POST
     @Path("setMyCommands")

@@ -20,7 +20,16 @@ public final class Dto {
         }
     }
 
-    public record Message(long messageId, User from, Chat chat, String text) {}
+    public record Message(long messageId, User from, Chat chat, String text, Document document) {}
+
+    /** A file sent to the bot (the KTP). */
+    public record Document(String fileId, String fileName, Long fileSize, String mimeType) {}
+
+    public record GetFile(String fileId) {}
+
+    public record FileInfo(String fileId, String filePath, Long fileSize) {}
+
+    public record FileResult(boolean ok, FileInfo result) {}
 
     public record User(long id) {}
 

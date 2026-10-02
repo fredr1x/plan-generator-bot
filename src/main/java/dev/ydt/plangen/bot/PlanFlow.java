@@ -57,6 +57,7 @@ public class PlanFlow {
     static final String PLAN_CONFIRM = "PLAN_CONFIRM";
 
     static final String PLAN_DATE_EDIT = "PLAN_DATE_EDIT";
+    static final String PLAN_KTP = "PLAN_KTP";
 
     // Notes go to the model, so they are in English (cheaper tokens).
     private static final String REDO_NOTE =
@@ -85,6 +86,9 @@ public class PlanFlow {
 
     @Inject
     BookFlow bookFlow;
+
+    @Inject
+    KtpFlow ktpFlow;
 
     @Inject
     PlanService plans;
@@ -279,6 +283,29 @@ public class PlanFlow {
                 bot.answer(cbId, null);
                 copyPlan(uid, chat, d);
             }
+            case "ku" -> {
+                bot.answer(cbId, null);
+                ktpFlow.onPickUnit(chat, msgId, Long.parseLong(p[2]), Integer.parseInt(p[3]));
+            }
+            case "kb" -> {
+                bot.answer(cbId, null);
+                ktpFlow.onBackToUnits(chat, msgId, Long.parseLong(p[2]));
+            }
+            case "kl" -> {
+                bot.answer(cbId, null);
+                if (ktpFlow.applyLesson(d, Long.parseLong(p[2]))) {
+                    askNext(uid, chat, d);
+                } else {
+                    bot.send(chat, "Урок КТП не найден, введите данные вручную.", null);
+                    d.ktpAsked = true;
+                    askNext(uid, chat, d);
+                }
+            }
+            case "kn" -> {
+                bot.answer(cbId, null);
+                d.ktpAsked = true;
+                askNext(uid, chat, d);
+            }
             case "frombook" -> {
                 bot.answer(cbId, null);
                 BookService.Heading h = bookFlow.proposal(d);
@@ -307,6 +334,14 @@ public class PlanFlow {
             case "edit" -> {
                 bot.answer(cbId, null);
                 switch (p[2]) {
+                    case "ktp" -> {
+                        d.section = null;
+                        d.topic = null;
+                        d.objectives = null;
+                        d.ktpLessonId = null;
+                        d.ktpAsked = false;
+                        askNext(uid, chat, d);
+                    }
                     case "book" -> {
                         bookFlow.reset(d);
                         askNext(uid, chat, d);
@@ -375,6 +410,8 @@ public class PlanFlow {
     private void askNext(long uid, long chat, Draft d) {
         if (d.classIds.isEmpty()) {
             askClasses(uid, chat, null, d);
+        } else if (!d.ktpAsked && ktpFlow.offerPick(uid, chat, d, classes(uid, d))) {
+            save(uid, PLAN_KTP, d); // units of the KTP were offered, the flow waits for a tap
         } else if (blank(d.section)) {
             ask(uid, chat, d, PLAN_SECTION, "Раздел? (например: «Unit 4. Животные»)\n\n"
                     + "Можно прислать всё сразу одним сообщением:\nРаздел: ...\nТема: ...\nЦели: коды и формулировки\n"
@@ -425,8 +462,11 @@ public class PlanFlow {
         rows.add(btn("✏️ Дата", "pl:edit:date"), btn("✏️ Классы", "pl:edit:classes"))
                 .add(btn("✏️ Раздел", "pl:edit:section"), btn("✏️ Тема", "pl:edit:topic"),
                         btn("✏️ Цели", "pl:edit:objectives"))
-                .add(btn("✏️ Пожелания", "pl:edit:notes"), btn("📚 Учебник", "pl:edit:book"))
-                .add(btn("✖ Отмена", "pl:cancel"));
+                .add(btn("✏️ Пожелания", "pl:edit:notes"), btn("📚 Учебник", "pl:edit:book"));
+        if (ktpFlow.hasKtp(classes)) {
+            rows.add(btn("📘 Другой урок из КТП", "pl:edit:ktp"));
+        }
+        rows.add(btn("✖ Отмена", "pl:cancel"));
         bot.send(chat, text, rows.build());
     }
 

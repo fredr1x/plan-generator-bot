@@ -25,6 +25,7 @@ public class Router {
             /classes — мои классы
             /schedule — расписание
             /books — каталог книг: добавить по ссылке okulyk.kz, привязать к классам
+            /ktp — КТП: загрузить файл Word, посмотреть юниты и темы
             /history — прошлые планы
             /profile — Ф.И.О., школа, предмет, язык, длительность урока
             /cancel — отменить текущий ввод
@@ -54,13 +55,31 @@ public class Router {
     @Inject
     CatalogFlow catalog;
 
+    @Inject
+    KtpFlow ktp;
+
     @Transactional
     public void handle(Update u) {
         if (u.callbackQuery() != null) {
             callback(u.callbackQuery());
+        } else if (u.message() != null && u.message().document() != null && u.message().from() != null) {
+            document(u.message());
         } else if (u.message() != null && u.message().text() != null && u.message().from() != null) {
             text(u.message());
         }
+    }
+
+    /** A Word file is taken as a KTP and read; the teacher checks the result before anything is saved. */
+    private void document(Message m) {
+        long uid = m.from().id();
+        long chat = m.chat().id();
+        Teacher teacher = Teacher.findById(uid);
+        if (teacher == null || !teacher.isComplete()) {
+            profile.start(uid, chat);
+            return;
+        }
+        LOG.infof("route: user=%d document \"%s\"", uid, m.document().fileName());
+        ktp.onDocument(uid, chat, m.document());
     }
 
     private void text(Message m) {
@@ -121,6 +140,11 @@ public class Router {
                     catalog.list(uid, chat);
                     return;
                 }
+                case "ktp" -> {
+                    ConvState.clear(uid);
+                    ktp.start(uid, chat);
+                    return;
+                }
                 case "history" -> {
                     ConvState.clear(uid);
                     plan.history(uid, chat);
@@ -159,6 +183,8 @@ public class Router {
             plan.onText(uid, chat, st, t);
         } else if (st.state.startsWith("CAT_")) {
             catalog.onText(uid, chat, st, t);
+        } else if (st.state.startsWith("KTP_")) {
+            ktp.onText(uid, chat, st, t);
         }
     }
 
@@ -177,6 +203,7 @@ public class Router {
                 case "sch" -> schedule.onCallback(uid, chat, cb.id(), p);
                 case "pl" -> plan.onCallback(uid, chat, msg, cb.id(), p);
                 case "cat" -> catalog.onCallback(uid, chat, msg, cb.id(), p);
+                case "ktp" -> ktp.onCallback(uid, chat, msg, cb.id(), p);
                 default -> bot.answer(cb.id(), null);
             }
         } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
