@@ -31,7 +31,7 @@ public class ClassesFlow {
     Messenger bot;
 
     static String normLetter(String letter) {
-        String up = letter.toUpperCase();
+        String up = letter.toUpperCase(java.util.Locale.ROOT); // never depend on the server locale
         char c = up.charAt(0);
         return String.valueOf(TWINS.getOrDefault(c, c));
     }

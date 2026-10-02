@@ -22,9 +22,9 @@ public final class FileNames {
             Map.entry('ч', "ch"), Map.entry('ш', "sh"), Map.entry('щ', "shch"), Map.entry('ъ', ""),
             Map.entry('ы', "y"), Map.entry('ь', ""), Map.entry('э', "e"), Map.entry('ю', "yu"),
             Map.entry('я', "ya"),
-            // Kazakh
-            Map.entry('ә', "a"), Map.entry('ғ', "g"), Map.entry('қ', "k"), Map.entry('ң', "n"),
-            Map.entry('ө', "o"), Map.entry('ұ', "u"), Map.entry('ү', "u"), Map.entry('һ', "h"),
+            // Kazakh: distinct from the Russian letters so 8А and 8Ә never get the same file name
+            Map.entry('ә', "ae"), Map.entry('ғ', "gh"), Map.entry('қ', "q"), Map.entry('ң', "ng"),
+            Map.entry('ө', "oe"), Map.entry('ұ', "uu"), Map.entry('ү', "ue"), Map.entry('һ', "h"),
             Map.entry('і', "i"));
 
     /** classes is the label list as shown in the plan, e.g. "7 А, 7 Б". */
