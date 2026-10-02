@@ -161,7 +161,7 @@ public class Router {
         String[] p = cb.data().split(":");
         try {
             switch (p[0]) {
-                case "prof", "lang", "min" -> profile.onCallback(uid, chat, cb.id(), p);
+                case "prof", "lang", "min", "sub" -> profile.onCallback(uid, chat, cb.id(), p);
                 case "cls" -> classes.onCallback(uid, chat, cb.id(), p);
                 case "sch" -> schedule.onCallback(uid, chat, cb.id(), p);
                 case "pl" -> plan.onCallback(uid, chat, msg, cb.id(), p);

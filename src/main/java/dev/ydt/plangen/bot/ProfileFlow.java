@@ -7,6 +7,8 @@ import dev.ydt.plangen.domain.Teacher;
 import dev.ydt.plangen.telegram.Messenger;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Onboarding (name, school, subject, plan language, lesson length) and later profile edits. */
 @ApplicationScoped
@@ -62,7 +64,7 @@ public class ProfileFlow {
             case ONB_SCHOOL -> {
                 t.school = v;
                 ConvState.set(uid, ONB_SUBJECT, null);
-                bot.send(chat, "Какой предмет вы преподаёте? (например: Английский язык, Математика)", null);
+                askSubject(chat);
             }
             case ONB_SUBJECT -> {
                 t.subject = v;
@@ -94,6 +96,26 @@ public class ProfileFlow {
         Teacher t = teacher(uid);
         switch (p[0]) {
             case "prof" -> profileAction(uid, chat, p.length > 1 ? p[1] : "");
+            case "sub" -> {
+                if ("other".equals(p[1])) {
+                    bot.send(chat, "Напишите название предмета:", null);
+                    return;
+                }
+                int idx = Integer.parseInt(p[1]);
+                if (idx < 0 || idx >= SUBJECTS.size()) {
+                    return;
+                }
+                t.subject = SUBJECTS.get(idx).value();
+                ConvState st = ConvState.get(uid);
+                if (st != null && ONB_SUBJECT.equals(st.state)) {
+                    t.lang = "en"; // plans are in English by default; changeable in /profile
+                    ConvState.set(uid, ONB_MIN, null);
+                    askMinutes(chat);
+                } else {
+                    ConvState.clear(uid);
+                    show(uid, chat);
+                }
+            }
             case "lang" -> {
                 t.lang = p[1];
                 ConvState st = ConvState.get(uid);
@@ -133,7 +155,7 @@ public class ProfileFlow {
             }
             case "subject" -> {
                 ConvState.set(uid, SET_SUBJECT, null);
-                bot.send(chat, "Предмет:", null);
+                askSubject(chat);
             }
             case "lang" -> askLang(chat);
             case "min" -> askMinutes(chat);
@@ -153,6 +175,44 @@ public class ProfileFlow {
                 .add(btn("Ф.И.О.", "prof:name"), btn("Школа", "prof:school"), btn("Предмет", "prof:subject"))
                 .add(btn("Язык планов", "prof:lang"), btn("Длительность урока", "prof:min"))
                 .build());
+    }
+
+    /** The button shows the Russian name, the English name is stored (the model reads it, and it is shorter). */
+    private record Subject(String label, String value) {}
+
+    private static final List<Subject> SUBJECTS = List.of(
+            new Subject("Английский язык", "English language"),
+            new Subject("Казахский язык", "Kazakh language"),
+            new Subject("Русский язык", "Russian language"),
+            new Subject("Математика", "Mathematics"),
+            new Subject("Алгебра", "Algebra"),
+            new Subject("Геометрия", "Geometry"),
+            new Subject("Информатика", "Informatics"),
+            new Subject("Физика", "Physics"),
+            new Subject("Химия", "Chemistry"),
+            new Subject("Биология", "Biology"),
+            new Subject("География", "Geography"),
+            new Subject("Всемирная история", "World history"),
+            new Subject("История Казахстана", "History of Kazakhstan"),
+            new Subject("Литература", "Literature"),
+            new Subject("Естествознание", "Science"),
+            new Subject("Самопознание", "Self-knowledge"),
+            new Subject("Музыка", "Music"),
+            new Subject("Изобразительное искусство", "Art"),
+            new Subject("Технология", "Technology"),
+            new Subject("Физкультура", "Physical education"));
+
+    private void askSubject(long chat) {
+        Kb.Rows rows = Kb.rows();
+        for (int i = 0; i < SUBJECTS.size(); i += 2) {
+            List<dev.ydt.plangen.telegram.Dto.InlineButton> row = new ArrayList<>();
+            for (int j = i; j < Math.min(i + 2, SUBJECTS.size()); j++) {
+                row.add(btn(SUBJECTS.get(j).label(), "sub:" + j));
+            }
+            rows.add(row);
+        }
+        rows.add(btn("✍️ Другой предмет", "sub:other"));
+        bot.send(chat, "Какой предмет вы преподаёте? Выберите из списка.", rows.build());
     }
 
     private void askLang(long chat) {

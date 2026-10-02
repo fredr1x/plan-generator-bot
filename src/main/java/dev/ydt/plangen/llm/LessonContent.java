@@ -16,7 +16,13 @@ public record LessonContent(
                 + "\"Learners will be able to:\", e.g. \"Learn the affirmative and negative forms of the Present Simple\"")
         List<String> lessonObjectives,
         @Description("Exactly three stages in order: beginning, middle, end of the class")
-        List<Stage> stages) {
+        List<Stage> stages,
+        @Description("The one value of the Birtutas tarbiye programme that the lesson activities develop most "
+                + "(group or pair work: UNITY_AND_SOLIDARITY; rules, laws, civic topics: LAW_AND_ORDER; homeland, "
+                + "history, symbols: INDEPENDENCE_AND_PATRIOTISM; fairness, duty: JUSTICE_AND_RESPONSIBILITY; "
+                + "effort, professions: HARD_WORK_AND_PROFESSIONALISM; projects, new ideas, technology: "
+                + "CREATIVITY_AND_INNOVATION)")
+        ProgramValue programValue) {
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record Stage(

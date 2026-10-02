@@ -16,7 +16,8 @@ Quarkus 3 / Java 21, Postgres (Neon) + Flyway, OpenAI через Quarkus LangCha
 - `webhook/WebhookResource`: `POST /webhook`, проверка секрета, whitelist `ALLOWED_IDS`, дедуп `update_id`, всегда 200.
 - `bot/`: `Router` (команды и callback'и), `ProfileFlow` (ФИО, школа, предмет, язык, минуты), `ClassesFlow`, `ScheduleFlow`, `PlanFlow` (сбор данных урока и фоновая генерация), `InputParser` (вставка «Раздел: / Тема: / Цели:»).
 - `llm/`: `LessonPlanner` (AI-сервис), `LessonContent` (схема ответа модели), `PlanService` (валидация: сумма минут = длительность урока, один повтор, локальная починка).
-- `doc/`: `PlanDocx` (шаблон документа, чёрные линии), `Labels` (подписи ru / kk / en).
+- `doc/`: `PlanDocx` (шаблон документа, чёрные линии), `Labels` (подписи ru / kk / en), `FileNames` (имя файла `plan-дата-класс-тема.docx`, ASCII).
+- `llm/ProgramValue`: шесть ценностей программы «Біртұтас тәрбие» (enum, в схеме для модели это закрытый список). Модель выбирает одну по содержанию урока, документ печатает её жирным в строке «Құндылық мақсаты». В промпте также требование: минимум одно ИИ-задание в середине урока и ИИ в ресурсах.
 - `telegram/`: DTO, REST-клиент Bot API, `Messenger`.
 - `domain/`: Panache-сущности. БД-схема `plangen`, миграции в `src/main/resources/db/migration/` (новые изменения только новыми `V*__*.sql`).
 - Промпты: `src/main/resources/prompts/lesson-system.txt` и `lesson-user.txt` (Qute: переменные в `{...}`, других фигурных скобок в тексте быть не должно). Всё, что уходит модели (промпты, описания схемы, замечания при повторе, пожелания-кнопки), пишется **на английском**: так меньше токенов. Язык самого плана задаётся переменной `{language}`.

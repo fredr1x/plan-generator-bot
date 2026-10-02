@@ -166,7 +166,7 @@ public class PlanService {
             stages.set(idx, new Stage(big.name(), Math.max(1, big.minutes() + delta), big.teacherActions(),
                     big.studentActions(), big.assessment(), big.resources()));
         }
-        return new LessonContent(cleanItems(c.lessonObjectives()), stages);
+        return new LessonContent(cleanItems(c.lessonObjectives()), stages, c.programValue());
     }
 
     private static List<String> cleanItems(List<String> in) {

@@ -85,7 +85,7 @@ public final class PlanDocx {
     // ---------- header grid ----------
 
     private static void header(XWPFDocument doc, Labels l, Data d) {
-        XWPFTable t = table(doc, 6, HEADER_COLS);
+        XWPFTable t = table(doc, 7, HEADER_COLS);
 
         // row 0: section | school (span 2)
         labelled(t.getRow(0).getCell(0), l.section(), d.section());
@@ -110,9 +110,17 @@ public final class PlanDocx {
         label(t.getRow(4).getCell(0), l.learningObjectives());
         text(span(t.getRow(4), 1, HEADER_COLS), d.objectives(), false);
 
-        // row 5: lesson objectives, one heading and short dashed sentences
-        label(t.getRow(5).getCell(0), l.lessonObjectives());
-        dashed(span(t.getRow(5), 1, HEADER_COLS), l.learnersWillBeAble(), d.content().lessonObjectives());
+        // row 5: value of the Birtutas tarbiye programme, the whole line in bold
+        label(t.getRow(5).getCell(0), l.valuesLabel());
+        XWPFTableCell valueCell = span(t.getRow(5), 1, HEADER_COLS);
+        if (d.content().programValue() != null) {
+            run(valueCell.getParagraphs().get(0),
+                    l.valuesPrefix() + " - " + d.content().programValue().title(d.lang()), true, SIZE);
+        }
+
+        // row 6: lesson objectives, one heading and short dashed sentences
+        label(t.getRow(6).getCell(0), l.lessonObjectives());
+        dashed(span(t.getRow(6), 1, HEADER_COLS), l.learnersWillBeAble(), d.content().lessonObjectives());
     }
 
     /** Optional bold heading, then one "- item" paragraph per item. */

@@ -19,13 +19,17 @@ End: summary, reflection, concrete homework.
 
 7. Differentiation. The tasks in the middle of the lesson give everybody a feasible job: basic level, advanced level, extension.
 
-8. Lesson objectives (header field "lessonObjectives"). 2-3 short sentences. Each one starts with a bare verb, because the document shows them under the heading "Learners will be able to:". Example: "Learn the affirmative and negative forms of the Present Simple". Base them on the given learning objectives (codes) and the topic of the lesson. Do not repeat the code. Do not use the words "will be able to" inside the sentences.
+8. Artificial intelligence in the lesson. The middle of the class MUST contain at least one task where artificial intelligence is used in a realistic way that fits the topic. Examples: students ask an AI chatbot to produce example sentences or a short dialogue on the topic and then find and correct its mistakes; students use an AI chatbot as a speaking partner in a role-play; the teacher uses AI to create a short quiz or a reading text at the right level; AI-generated pictures are used to introduce vocabulary; students compare their own answer with an AI answer and decide which is better and why. Write the exact prompt the teacher or the students type, in quotation marks. AI output is always checked critically by the students or the teacher: say how. Name the AI tool and the device in the resources, for example "AI chatbot (ChatGPT or Gemini) on the teacher's laptop and students' phones". If the devices may be missing, add one short phrase that the teacher shows the AI answer on the screen instead.
 
-9. Learning objectives with codes. The teacher gives them in a code plus skill form, for example "1.2.3.4 Writing", sometimes with the full wording. If only a code and a skill name are given, treat it as that skill practised on the topic of the lesson. Never invent another meaning for a code and never write a new code.
+9. Programme value (field "programValue"). The lesson develops one value of the "Birtutas tarbiye" programme. Choose the one that best matches what the learners actually do in your plan and the topic: group or pair work is UNITY_AND_SOLIDARITY; rules, laws and civic topics are LAW_AND_ORDER; homeland, history and state symbols are INDEPENDENCE_AND_PATRIOTISM; fairness, duty and respect for people are JUSTICE_AND_RESPONSIBILITY; effort, careers and professions are HARD_WORK_AND_PROFESSIONALISM; projects, new ideas and technology are CREATIVITY_AND_INNOVATION. Do not choose CREATIVITY_AND_INNOVATION just because AI is used; decide by the main activity and the topic.
 
-10. Language. Write all the text in {language}. For language subjects, give the teaching examples (words, sentences, texts) in the language being studied.
+10. Lesson objectives (header field "lessonObjectives"). 2-3 short sentences. Each one starts with a bare verb, because the document shows them under the heading "Learners will be able to:". Example: "Learn the affirmative and negative forms of the Present Simple". Base them on the given learning objectives (codes) and the topic of the lesson. Do not repeat the code. Do not use the words "will be able to" inside the sentences.
 
-11. Level and age. Choose the tasks and the wording to suit the age of the students of the given class.
+11. Learning objectives with codes. The teacher gives them in a code plus skill form, for example "1.2.3.4 Writing", sometimes with the full wording. If only a code and a skill name are given, treat it as that skill practised on the topic of the lesson. Never invent another meaning for a code and never write a new code.
+
+12. Language. Write all the text in {language}. For language subjects, give the teaching examples (words, sentences, texts) in the language being studied.
+
+13. Level and age. Choose the tasks and the wording to suit the age of the students of the given class.
 
 FORBIDDEN
 
