@@ -1,0 +1,34 @@
+# plan-generator-bot
+
+Telegram-бот (webhook) для учителя: составляет краткосрочные (поурочные) планы уроков в DOCX.
+Quarkus 3 / Java 21, Postgres (Neon) + Flyway, OpenAI через Quarkus LangChain4j (структурированный ответ в Java-record), Apache POI для DOCX.
+
+## Правила
+
+- **Не писать тесты вообще**: ни unit, ни smoke, ни интеграционные, ни с Testcontainers. Не создавать `src/test`, не добавлять тестовые зависимости и не запускать `mvn test` / `verify`.
+- **Не использовать Testcontainers / Dev Services**: `quarkus.devservices.enabled=false`. БД берётся из env (`DB_URL`, `DB_USER`, `DB_PASSWORD`).
+- Проверка работоспособности: сборка (`./mvnw -DskipTests package`) и ручной прогон бота.
+- Секреты (`BOT_TOKEN`, `OPENAI_API_KEY`, пароль БД) только в `.env` (он в `.gitignore`) или в env хостинга. Не коммитить и не печатать в ответах.
+- Не использовать популярные порты: локально порт из `.env` (`PORT`), по умолчанию 3847.
+
+## Структура (`dev.ydt.plangen`)
+
+- `webhook/WebhookResource`: `POST /webhook`, проверка секрета, whitelist `ALLOWED_IDS`, дедуп `update_id`, всегда 200.
+- `bot/`: `Router` (команды и callback'и), `ProfileFlow` (ФИО, школа, предмет, язык, минуты), `ClassesFlow`, `ScheduleFlow`, `PlanFlow` (сбор данных урока и фоновая генерация), `InputParser` (вставка «Раздел: / Тема: / Цели:»).
+- `llm/`: `LessonPlanner` (AI-сервис), `LessonContent` (схема ответа модели), `PlanService` (валидация: сумма минут = длительность урока, один повтор, локальная починка).
+- `doc/`: `PlanDocx` (шаблон документа, чёрные линии), `Labels` (подписи ru / kk / en).
+- `telegram/`: DTO, REST-клиент Bot API, `Messenger`.
+- `domain/`: Panache-сущности. БД-схема `plangen`, миграции в `src/main/resources/db/migration/` (новые изменения только новыми `V*__*.sql`).
+- Промпты: `src/main/resources/prompts/lesson-system.txt` и `lesson-user.txt` (Qute: переменные в `{...}`, других фигурных скобок в тексте быть не должно). Всё, что уходит модели (промпты, описания схемы, замечания при повторе, пожелания-кнопки), пишется **на английском**: так меньше токенов. Язык самого плана задаётся переменной `{language}`.
+
+## Конфиг (env)
+
+`BOT_TOKEN`, `WEBHOOK_SECRET`, `ALLOWED_IDS`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `APP_TIMEZONE`, `DB_URL`, `DB_USER`, `DB_PASSWORD`, `PORT`, `DAILY_PLAN_LIMIT`. Пример: `.env.example`.
+
+## Соглашения
+
+- `callback_data` в Telegram ≤ 64 байт: короткие id (`pl:c:12`, `cls:del:3`).
+- Состояние диалога хранится в `conv_state` (инстанс может засыпать или перезапускаться).
+- Цели обучения и коды вставляются в документ дословно так, как их прислал учитель. Модель пишет только цели урока и ход урока.
+- Генерация идёт в фоновом потоке без открытой DB-транзакции; результат сохраняется через `QuarkusTransaction.requiringNew()`.
+- Все сообщения бота — обычный текст (без parse mode).

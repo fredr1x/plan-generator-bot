@@ -1,0 +1,66 @@
+package dev.ydt.plangen.webhook;
+
+import dev.ydt.plangen.bot.Router;
+import dev.ydt.plangen.service.Dedup;
+import dev.ydt.plangen.telegram.Dto.Update;
+import dev.ydt.plangen.telegram.Messenger;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.HeaderParam;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.List;
+import java.util.Optional;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
+
+@Path("/webhook")
+public class WebhookResource {
+
+    private static final Logger LOG = Logger.getLogger(WebhookResource.class);
+
+    @ConfigProperty(name = "app.bot.webhook-secret")
+    String secret;
+
+    @ConfigProperty(name = "app.bot.allowed-ids")
+    Optional<List<Long>> allowedIds;
+
+    @Inject
+    Dedup dedup;
+
+    @Inject
+    Router router;
+
+    @Inject
+    Messenger bot;
+
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response receive(@HeaderParam("X-Telegram-Bot-Api-Secret-Token") String token, Update update) {
+        if (token == null || !MessageDigest.isEqual(
+                token.getBytes(StandardCharsets.UTF_8), secret.getBytes(StandardCharsets.UTF_8))) {
+            return Response.status(Response.Status.FORBIDDEN).build();
+        }
+        Long from = update.fromId();
+        if (from == null || !allowedIds.orElse(List.of()).contains(from)) {
+            return Response.ok().build(); // closed bot: silently ignore strangers
+        }
+        try {
+            if (dedup.firstTime(update.updateId())) {
+                router.handle(update);
+            }
+        } catch (Exception e) {
+            LOG.error("update " + update.updateId() + " failed", e);
+            Long chat = update.chatId();
+            if (chat != null) {
+                bot.send(chat, "⚠️ Что-то пошло не так, попробуйте ещё раз.", null);
+            }
+        }
+        // always 200: failures are logged, Telegram must not retry forever
+        return Response.ok().build();
+    }
+}

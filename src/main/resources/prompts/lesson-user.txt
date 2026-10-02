@@ -1,0 +1,18 @@
+Write the lesson procedure and the lesson objectives.
+
+Subject: {subject}
+Class: {classes}
+Number of students: {students}
+Lesson length: {minutes} minutes
+Plan language: {language}
+Section: {section}
+Lesson topic: {topic}
+
+Learning objectives according to the curriculum (from the teacher, verbatim, with codes):
+{objectives}
+
+Teacher's wishes: {notes}
+
+Previous version of the plan (if given, edit it according to the teacher's wishes and keep everything else: structure, timings, language, good tasks): {previous}
+
+Remark about the previous attempt: {feedback}
