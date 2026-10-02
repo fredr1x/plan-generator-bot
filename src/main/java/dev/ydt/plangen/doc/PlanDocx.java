@@ -31,9 +31,14 @@ import org.openxmlformats.schemas.wordprocessingml.x2006.main.STTblLayoutType;
  */
 public final class PlanDocx {
 
+    /**
+     * classCounts is "7 А=25;7 Б=24" (may be null for old plans). With one class the cells show a single
+     * number as before; with several classes every class gets its own line in "Number present" and an empty
+     * line in "Absent" for the teacher to fill in after the lesson.
+     */
     public record Data(String lang, String school, String teacher, LocalDate date, String classes,
                        int students, String section, String topic, String objectives,
-                       LessonContent content) {}
+                       LessonContent content, String classCounts) {}
 
     private static final String FONT = "Times New Roman";
     private static final int SIZE = 11;
@@ -99,8 +104,14 @@ public final class PlanDocx {
 
         // row 2: class | present | absent (left empty on purpose)
         labelled(t.getRow(2).getCell(0), l.cls(), d.classes());
-        labelled(t.getRow(2).getCell(1), l.present(), String.valueOf(d.students()));
-        labelled(t.getRow(2).getCell(2), l.absent(), "");
+        List<String[]> perClass = parseCounts(d.classCounts());
+        if (perClass.size() > 1) {
+            perClassLines(t.getRow(2).getCell(1), l.present(), perClass, true);
+            perClassLines(t.getRow(2).getCell(2), l.absent(), perClass, false);
+        } else {
+            labelled(t.getRow(2).getCell(1), l.present(), String.valueOf(d.students()));
+            labelled(t.getRow(2).getCell(2), l.absent(), "");
+        }
 
         // row 3: topic
         label(t.getRow(3).getCell(0), l.topic());
@@ -121,6 +132,34 @@ public final class PlanDocx {
         // row 6: lesson objectives, one heading and short dashed sentences
         label(t.getRow(6).getCell(0), l.lessonObjectives());
         dashed(span(t.getRow(6), 1, HEADER_COLS), l.learnersWillBeAble(), d.content().lessonObjectives());
+    }
+
+    /** "7 А=25;7 Б=24" into [["7 А", "25"], ["7 Б", "24"]]. */
+    private static List<String[]> parseCounts(String counts) {
+        List<String[]> out = new java.util.ArrayList<>();
+        if (counts == null || counts.isBlank()) {
+            return out;
+        }
+        for (String part : counts.split(";")) {
+            int eq = part.lastIndexOf('=');
+            if (eq > 0) {
+                out.add(new String[] {part.substring(0, eq).strip(), part.substring(eq + 1).strip()});
+            }
+        }
+        return out;
+    }
+
+    /** Bold caption, then one line per class: "7 А: 25" (present) or "7 А:" with nothing after it (absent). */
+    private static void perClassLines(XWPFTableCell cell, String caption, List<String[]> classes,
+                                      boolean withNumbers) {
+        XWPFParagraph head = cell.getParagraphs().get(0);
+        head.setSpacingAfter(20);
+        run(head, caption + ":", true, SIZE);
+        for (String[] c : classes) {
+            XWPFParagraph p = cell.addParagraph();
+            p.setSpacingAfter(20);
+            run(p, c[0] + ": " + (withNumbers ? c[1] : ""), false, SIZE);
+        }
     }
 
     /** Optional bold heading, then one "- item" paragraph per item. */

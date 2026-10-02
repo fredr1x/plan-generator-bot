@@ -256,25 +256,6 @@ public class BookFlow {
         }
     }
 
-    /** /books. */
-    void list(long chat) {
-        List<Book> all = Book.allByTitle();
-        if (all.isEmpty()) {
-            bot.send(chat, "Учебников пока нет. Их загружают отдельной утилитой (tools/book-ingest).", null);
-            return;
-        }
-        StringBuilder sb = new StringBuilder("📚 Учебники:\n");
-        for (Book b : all) {
-            long loaded = BookPage.count("bookId = ?1", b.id);
-            sb.append("• ").append(b.title).append(" — ").append(b.typeLabel());
-            if (b.grade != null) sb.append(", ").append(b.grade).append(" класс");
-            if (b.track != null) sb.append(", ").append(Book.trackLabel(b.track));
-            sb.append(", ").append(b.quartersLabel());
-            sb.append(" — загружено ").append(loaded).append(" из ").append(b.pages).append(" стр.\n");
-        }
-        bot.send(chat, sb.toString().stripTrailing(), null);
-    }
-
     // ------------------------------------------------------------------ internals
 
     /** Books that fit the classes and are not used in this plan yet. */
@@ -286,8 +267,17 @@ public class BookFlow {
         }
         Set<Long> used = new HashSet<>();
         d.books.forEach(r -> used.add(r.bookId));
+        int quarter = Book.quarterOf(lessonDate);
+        // the books the teacher linked to these classes in the catalog come first; without links, books of
+        // the grade (and track) are offered
+        List<Book> base = Book.linkedLoaded(classes.stream().map(c -> c.id).toList());
+        if (base.isEmpty()) {
+            base = Book.candidates(grade, tracks, quarter);
+        } else {
+            Book.sortForQuarter(base, quarter);
+        }
         List<Book> out = new ArrayList<>();
-        for (Book b : Book.candidates(grade, tracks, Book.quarterOf(lessonDate))) {
+        for (Book b : base) {
             if (!used.contains(b.id)) out.add(b);
         }
         return out;

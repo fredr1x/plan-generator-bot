@@ -77,7 +77,8 @@ public class PlanFlow {
     private record Job(long userId, long chatId, Long placeholderId, LocalDate date, String subject, String lang,
                        int minutes, String school, String teacher, String classes, int students,
                        String section, String topic, String objectives, String notes, String previousJson,
-                       String bookRefs, String bookContext, List<BookService.Answer> bookAnswers) {}
+                       String bookRefs, String bookContext, List<BookService.Answer> bookAnswers,
+                       String classCounts) {}
 
     @Inject
     Messenger bot;
@@ -181,11 +182,6 @@ public class PlanFlow {
                     bot.send(chat, "Выберите книгу кнопкой выше или нажмите «Без учебника».", null);
             default -> bot.send(chat, "Нажмите одну из кнопок выше или /cancel, чтобы начать заново.", null);
         }
-    }
-
-    /** /books. */
-    public void books(long chat) {
-        bookFlow.list(chat);
     }
 
     public void onCallback(long uid, long chat, long msgId, String cbId, String[] p) {
@@ -450,7 +446,7 @@ public class PlanFlow {
         Job job = new Job(uid, chat, placeholder, LocalDate.parse(d.date), t.subject, t.lang, t.lessonMinutes,
                 t.school, t.fullName, labels(classes), classes.stream().mapToInt(c -> c.studentCount).sum(),
                 d.section, d.topic, d.objectives, d.notes, null, bookFlow.toJson(d.books),
-                bookFlow.contextFor(d.books), bookFlow.answersFor(d.books));
+                bookFlow.contextFor(d.books), bookFlow.answersFor(d.books), countsOf(classes));
         exec.submit(() -> run(job));
     }
 
@@ -480,7 +476,7 @@ public class PlanFlow {
         Job job = new Job(uid, chat, placeholder, r.planDate, t.subject, t.lang, t.lessonMinutes, t.school,
                 t.fullName, r.classes, r.students, r.section, r.topic, r.objectives, note,
                 editPrevious ? r.contentJson : null, r.bookRefs, bookFlow.contextFor(bookFlow.fromJson(r.bookRefs)),
-                bookFlow.answersFor(bookFlow.fromJson(r.bookRefs)));
+                bookFlow.answersFor(bookFlow.fromJson(r.bookRefs)), countsFor(r));
         exec.submit(() -> run(job));
     }
 
@@ -522,6 +518,7 @@ public class PlanFlow {
         r.objectives = d.objectives;
         r.contentJson = src.contentJson;
         r.bookRefs = src.bookRefs;
+        r.classCounts = countsOf(classes);
         r.model = "copy";
         r.persist();
         LOG.infof("[copy] user=%d plan #%d copied to #%d for \"%s\" on %s (no model call)", uid, src.id, r.id,
@@ -530,7 +527,7 @@ public class PlanFlow {
         try {
             LessonContent content = mapper.readValue(r.contentJson, LessonContent.class);
             boolean sent = sendDocx(chat, new PlanDocx.Data(t.lang, t.school, t.fullName, r.planDate, r.classes,
-                    r.students, r.section, r.topic, r.objectives, content), r.id, r.topic);
+                    r.students, r.section, r.topic, r.objectives, content, r.classCounts), r.id, r.topic);
             if (sent) {
                 bot.send(chat, "Готово ✅ План скопирован для " + r.classes + " на "
                         + r.planDate.format(Dates.FULL) + ".", actions(r.id));
@@ -560,7 +557,7 @@ public class PlanFlow {
         try {
             LessonContent content = mapper.readValue(r.contentJson, LessonContent.class);
             if (sendDocx(chat, new PlanDocx.Data(t.lang, t.school, t.fullName, r.planDate, r.classes, r.students,
-                    r.section, r.topic, r.objectives, content), r.id, r.topic)) {
+                    r.section, r.topic, r.objectives, content, countsFor(r)), r.id, r.topic)) {
                 bot.send(chat, "Что сделать с этим планом?", actions(r.id));
             }
         } catch (IOException e) {
@@ -597,6 +594,7 @@ public class PlanFlow {
                 r.contentJson = json;
                 r.model = plans.model();
                 r.bookRefs = job.bookRefs();
+                r.classCounts = job.classCounts();
                 r.tokensIn = g.tokensIn();
                 r.tokensOut = g.tokensOut();
                 r.attempts = g.attempts();
@@ -614,7 +612,7 @@ public class PlanFlow {
             if (job.placeholderId() != null) bot.delete(job.chatId(), job.placeholderId());
             boolean sent = sendDocx(job.chatId(), new PlanDocx.Data(job.lang(), job.school(), job.teacher(),
                     job.date(), job.classes(), job.students(), job.section(), job.topic(), job.objectives(),
-                    content), id, job.topic());
+                    content, job.classCounts()), id, job.topic());
             LOG.infof("[job] user=%d finished in %d ms, document sent=%s", job.userId(),
                     (System.nanoTime() - started) / 1_000_000, sent);
             if (sent) {
@@ -669,6 +667,24 @@ public class PlanFlow {
         return d.classIds.stream().map(all::get).filter(c -> c != null)
                 .sorted(Comparator.comparingInt((SchoolClass c) -> c.grade).thenComparing(c -> c.letter))
                 .toList();
+    }
+
+    /** "7 А=25;7 Б=24": the class list in the form the document builder reads. */
+    private static String countsOf(List<SchoolClass> classes) {
+        return classes.stream().map(c -> c.label() + "=" + c.studentCount).collect(Collectors.joining(";"));
+    }
+
+    /** Stored counts of a plan; for plans made before they were stored, the teacher's current classes are used. */
+    private static String countsFor(LessonPlanRecord r) {
+        if (r.classCounts != null && !r.classCounts.isBlank()) {
+            return r.classCounts;
+        }
+        List<SchoolClass> mine = SchoolClass.forTeacher(r.teacherId);
+        List<SchoolClass> found = new ArrayList<>();
+        for (String label : r.classes.split(",\\s*")) {
+            mine.stream().filter(c -> c.label().equals(label.strip())).findFirst().ifPresent(found::add);
+        }
+        return found.isEmpty() ? null : countsOf(found);
     }
 
     private static String labels(List<SchoolClass> classes) {

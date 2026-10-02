@@ -29,6 +29,10 @@ public class LessonPlanRecord extends PanacheEntityBase {
 
     public int students;
 
+    /** "7 А=25;7 Б=24": students per class, so the document can list them one by one. */
+    @Column(name = "class_counts")
+    public String classCounts;
+
     public String section;
 
     public String topic;

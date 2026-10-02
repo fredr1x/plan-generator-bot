@@ -8,6 +8,8 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -65,26 +67,47 @@ public final class Main {
 
     private Main() {}
 
+    /** Everything the loader needs from the environment and the command line. */
+    private record Cfg(String dbUrl, String dbUser, String dbPass, String apiKey, String model, double priceIn,
+                       double priceOut, int dpi, int parallel, String botToken) {
+        static Cfg from(Map<String, String> env, Map<String, String> opt, boolean needKey) {
+            return new Cfg(need(env, "DB_URL"), need(env, "DB_USER"), need(env, "DB_PASSWORD"),
+                    needKey ? need(env, "OPENAI_API_KEY") : env.getOrDefault("OPENAI_API_KEY", ""),
+                    opt.getOrDefault("model", env.getOrDefault("OPENAI_MODEL", "gpt-5-mini")),
+                    Double.parseDouble(env.getOrDefault("PRICE_INPUT_PER_M", "0.25")),
+                    Double.parseDouble(env.getOrDefault("PRICE_OUTPUT_PER_M", "2.00")),
+                    Integer.parseInt(opt.getOrDefault("dpi", "130")),
+                    Integer.parseInt(opt.getOrDefault("parallel", "3")),
+                    env.getOrDefault("BOT_TOKEN", ""));
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         Map<String, String> opt = parseArgs(args);
-        if (!opt.containsKey("pdf") || !opt.containsKey("title")) {
+        boolean catalogMode = opt.containsKey("watch") || opt.containsKey("once") || opt.containsKey("book-id");
+        if (!catalogMode && (!opt.containsKey("pdf") || !opt.containsKey("title"))) {
             System.out.println("""
-                    Usage: java -jar book-ingest.jar --pdf <file.pdf> --title "<book title>" [--subject "..."] [--grade 7]
-                           [--type student|workbook] [--track natural|social] [--quarters 1-4] [--part "first half"]
-                           [--from 1] [--to 200] [--dpi 130] [--parallel 3] [--model gpt-5-mini] [--env .env] [--force]
-                    Needs DB_URL, DB_USER, DB_PASSWORD and OPENAI_API_KEY (from the environment or the --env file).""");
+                    Manual:  java -jar book-ingest.jar --pdf <file.pdf> --title "<book title>" [--subject "..."] [--grade 7]
+                             [--type student|workbook] [--track natural|social] [--quarters 1-4] [--part "first half"]
+                             [--from 1] [--to 200] [--pages 22,24] [--dpi 130] [--parallel 3] [--model gpt-5-mini]
+                             [--env .env] [--force]
+                    Catalog: java -jar book-ingest.jar --watch [--poll 60]     (loads the books the owner approved, forever)
+                             java -jar book-ingest.jar --once                  (loads the approved books and exits)
+                             java -jar book-ingest.jar --book-id 5 [--dry-run] (loads one catalog book from its PDF link)
+                    Needs DB_URL, DB_USER, DB_PASSWORD and OPENAI_API_KEY (from the environment or the --env file);
+                    BOT_TOKEN is optional: with it the loader tells the teacher when the book is ready.
+                    --dry-run downloads the PDF and counts its pages, without any paid call.""");
             System.exit(2);
         }
         Map<String, String> env = loadEnv(opt.getOrDefault("env", ".env"));
-        String dbUrl = need(env, "DB_URL");
-        String dbUser = need(env, "DB_USER");
-        String dbPass = need(env, "DB_PASSWORD");
-        String apiKey = need(env, "OPENAI_API_KEY");
-        String model = opt.getOrDefault("model", env.getOrDefault("OPENAI_MODEL", "gpt-5-mini"));
-        double priceIn = Double.parseDouble(env.getOrDefault("PRICE_INPUT_PER_M", "0.25"));
-        double priceOut = Double.parseDouble(env.getOrDefault("PRICE_OUTPUT_PER_M", "2.00"));
-        int dpi = Integer.parseInt(opt.getOrDefault("dpi", "130"));
-        int parallel = Integer.parseInt(opt.getOrDefault("parallel", "3"));
+        if (catalogMode) {
+            catalog(opt, Cfg.from(env, opt, !opt.containsKey("dry-run")));
+        } else {
+            manual(opt, Cfg.from(env, opt, true));
+        }
+    }
+
+    private static void manual(Map<String, String> opt, Cfg cfg) throws Exception {
         boolean force = opt.containsKey("force");
         String subject = opt.getOrDefault("subject", "");
         Integer grade = opt.containsKey("grade") ? Integer.valueOf(opt.get("grade")) : null;
@@ -97,7 +120,7 @@ public final class Main {
             int to = Math.min(total, Integer.parseInt(opt.getOrDefault("to", String.valueOf(total))));
             long bookId;
             Set<Integer> done;
-            try (Connection c = connect(dbUrl, dbUser, dbPass)) {
+            try (Connection c = connect(cfg)) {
                 bookId = upsertBook(c, title, subject, grade, total, kind);
                 done = force ? Set.of() : existingPages(c, bookId);
             }
@@ -122,61 +145,292 @@ public final class Main {
                     kind.part.isBlank() ? "" : " (" + kind.part + ")");
             System.out.printf("%d pages in the PDF, loading %d-%d, %d to do, %d already loaded%n",
                     total, from, to, todo.size(), done.size());
-            System.out.printf("Model %s, %d dpi, %d in parallel%n", model, dpi, parallel);
+            System.out.printf("Model %s, %d dpi, %d in parallel%n", cfg.model, cfg.dpi, cfg.parallel);
             if (todo.isEmpty()) {
                 System.out.println("Nothing to do.");
                 return;
             }
+            Summary s = ingest(pdf, bookId, title, subject, grade, todo, cfg);
+            if (!s.failed.isEmpty()) {
+                System.out.println("Failed pages (run the same command again, loaded pages are skipped): " + s.failed);
+            }
+        }
+    }
 
-            PDFRenderer renderer = new PDFRenderer(pdf);
-            ExecutorService pool = Executors.newFixedThreadPool(parallel);
-            AtomicInteger finished = new AtomicInteger();
-            AtomicLong tokIn = new AtomicLong();
-            AtomicLong tokOut = new AtomicLong();
-            List<Integer> failed = new ArrayList<>();
-            List<Future<?>> futures = new ArrayList<>();
-            long started = System.currentTimeMillis();
+    // ------------------------------------------------------------------ the page loop
 
-            for (int page : todo) {
-                // rendering touches the PDF document, so it is done on the main thread, one page at a time
-                byte[] jpeg = renderJpeg(renderer, page - 1, dpi);
-                futures.add(pool.submit(() -> {
-                    try {
-                        Page result = readPage(apiKey, model, jpeg, subject, grade, title);
-                        try (Connection c = connect(dbUrl, dbUser, dbPass)) {
-                            savePage(c, bookId, page, result);
-                        }
-                        tokIn.addAndGet(result.tokensIn);
-                        tokOut.addAndGet(result.tokensOut);
-                        int n = finished.incrementAndGet();
-                        System.out.printf("[%d/%d] pdf page %d ok: printed=%s kind=%s exercises=%d pictures=%d "
-                                        + "tokens in=%d out=%d heading=\"%s\"%n",
-                                n, todo.size(), page, result.node.path("printedPage").isNull() ? "-"
-                                        : result.node.path("printedPage").asText(),
-                                result.node.path("kind").asText(), result.node.path("exercises").size(),
-                                result.node.path("pictures").size(), result.tokensIn, result.tokensOut,
-                                clip(result.node.path("heading").asText(), 50));
-                    } catch (Exception e) {
-                        synchronized (failed) {
-                            failed.add(page);
-                        }
-                        System.out.printf("[FAILED] pdf page %d: %s%n", page, e.getMessage());
+    private record Summary(int ok, List<Integer> failed, long tokIn, long tokOut) {}
+
+    /** Renders the pages, reads each with the model and saves it; returns what happened. */
+    private static Summary ingest(PDDocument pdf, long bookId, String title, String subject, Integer grade,
+                                  List<Integer> todo, Cfg cfg) throws Exception {
+        PDFRenderer renderer = new PDFRenderer(pdf);
+        ExecutorService pool = Executors.newFixedThreadPool(cfg.parallel);
+        AtomicInteger finished = new AtomicInteger();
+        AtomicLong tokIn = new AtomicLong();
+        AtomicLong tokOut = new AtomicLong();
+        List<Integer> failed = new ArrayList<>();
+        List<Future<?>> futures = new ArrayList<>();
+        long started = System.currentTimeMillis();
+
+        for (int page : todo) {
+            // rendering touches the PDF document, so it is done on the calling thread, one page at a time
+            byte[] jpeg = renderJpeg(renderer, page - 1, cfg.dpi);
+            futures.add(pool.submit(() -> {
+                try {
+                    Page result = readPage(cfg.apiKey, cfg.model, jpeg, subject, grade, title);
+                    try (Connection c = connect(cfg)) {
+                        savePage(c, bookId, page, result);
                     }
-                }));
-            }
-            for (Future<?> f : futures) {
-                f.get();
-            }
-            pool.shutdown();
+                    tokIn.addAndGet(result.tokensIn);
+                    tokOut.addAndGet(result.tokensOut);
+                    int n = finished.incrementAndGet();
+                    System.out.printf("[%d/%d] pdf page %d ok: printed=%s kind=%s exercises=%d pictures=%d "
+                                    + "tokens in=%d out=%d heading=\"%s\"%n",
+                            n, todo.size(), page, result.node.path("printedPage").isNull() ? "-"
+                                    : result.node.path("printedPage").asText(),
+                            result.node.path("kind").asText(), result.node.path("exercises").size(),
+                            result.node.path("pictures").size(), result.tokensIn, result.tokensOut,
+                            clip(result.node.path("heading").asText(), 50));
+                } catch (Exception e) {
+                    synchronized (failed) {
+                        failed.add(page);
+                    }
+                    System.out.printf("[FAILED] pdf page %d: %s%n", page, e.getMessage());
+                }
+            }));
+        }
+        for (Future<?> f : futures) {
+            f.get();
+        }
+        pool.shutdown();
+        failed.sort(Integer::compare);
 
-            double cost = tokIn.get() * priceIn / 1_000_000.0 + tokOut.get() * priceOut / 1_000_000.0;
-            System.out.printf("%nDone in %d s: %d pages ok, %d failed. Tokens in=%d out=%d, estimated cost $%.3f%n",
-                    (System.currentTimeMillis() - started) / 1000, finished.get(), failed.size(), tokIn.get(),
-                    tokOut.get(), cost);
-            if (!failed.isEmpty()) {
-                failed.sort(Integer::compare);
-                System.out.println("Failed pages (run the same command again, loaded pages are skipped): " + failed);
+        double cost = tokIn.get() * cfg.priceIn / 1_000_000.0 + tokOut.get() * cfg.priceOut / 1_000_000.0;
+        System.out.printf("%nDone in %d s: %d pages ok, %d failed. Tokens in=%d out=%d, estimated cost $%.3f%n",
+                (System.currentTimeMillis() - started) / 1000, finished.get(), failed.size(), tokIn.get(),
+                tokOut.get(), cost);
+        return new Summary(finished.get(), failed, tokIn.get(), tokOut.get());
+    }
+
+    // ------------------------------------------------------------------ catalog mode
+
+    /** A catalog row the loader works on. */
+    private record CatalogRow(long id, String title, String subject, Integer grade, String pdfUrl, String status,
+                              Long requestedBy) {}
+
+    /**
+     * --watch: every poll interval, load the books the owner approved (status approved). --once does one round.
+     * --book-id N loads that book at once (the owner's explicit command, no approval needed).
+     * The loader runs on a computer of the owner: it is the only place that downloads PDFs and pays for pages.
+     */
+    private static void catalog(Map<String, String> opt, Cfg cfg) throws Exception {
+        boolean dry = opt.containsKey("dry-run");
+        if (opt.containsKey("book-id")) {
+            processBook(Long.parseLong(opt.get("book-id")), cfg, dry, true);
+            return;
+        }
+        long pollMs = Long.parseLong(opt.getOrDefault("poll", "60")) * 1000;
+        System.out.println(opt.containsKey("watch") ? "Watching for approved books every " + pollMs / 1000 + " s ..."
+                : "Looking for approved books ...");
+        while (true) {
+            List<Long> ids = approvedBookIds(cfg);
+            for (long id : ids) {
+                try {
+                    processBook(id, cfg, dry, false);
+                } catch (Exception e) {
+                    System.out.println("[FAILED] book " + id + ": " + e.getMessage());
+                }
             }
+            if (!opt.containsKey("watch")) {
+                if (ids.isEmpty()) System.out.println("No approved books.");
+                return;
+            }
+            Thread.sleep(pollMs);
+        }
+    }
+
+    private static void processBook(long id, Cfg cfg, boolean dry, boolean manual) throws Exception {
+        CatalogRow row;
+        try (Connection c = connect(cfg)) {
+            row = readRow(c, id);
+        }
+        if (row == null) {
+            System.out.println("No book with id " + id);
+            return;
+        }
+        if (!manual && !"approved".equals(row.status)) {
+            return;
+        }
+        System.out.printf("Book #%d \"%s\" (%s)%n", row.id, row.title, row.status);
+        if (row.pdfUrl == null || row.pdfUrl.isBlank()) {
+            finish(cfg, row, "failed", "the catalog has no PDF link for this book", null);
+            return;
+        }
+        if (!dry) {
+            setStatus(cfg, row.id, "loading", null);
+        }
+        Path file = null;
+        try {
+            file = download(row.pdfUrl, 300L * 1024 * 1024);
+            System.out.printf("Downloaded %d KB from %s%n", Files.size(file) / 1024, row.pdfUrl);
+            try (PDDocument pdf = Loader.loadPDF(file.toFile())) {
+                int total = pdf.getNumberOfPages();
+                if (dry) {
+                    System.out.printf("Dry run: the PDF has %d pages. No model was called, nothing was saved.%n", total);
+                    return;
+                }
+                Set<Integer> done;
+                try (Connection c = connect(cfg)) {
+                    done = existingPages(c, row.id);
+                    setPages(c, row.id, total);
+                }
+                List<Integer> todo = new ArrayList<>();
+                for (int p = 1; p <= total; p++) {
+                    if (!done.contains(p)) todo.add(p);
+                }
+                System.out.printf("%d pages, %d to load, model %s%n", total, todo.size(), cfg.model);
+                Summary s = todo.isEmpty() ? new Summary(0, List.of(), 0, 0)
+                        : ingest(pdf, row.id, row.title, row.subject == null ? "" : row.subject, row.grade, todo, cfg);
+                if (s.failed.isEmpty()) {
+                    finish(cfg, row, "loaded", null, total);
+                } else {
+                    finish(cfg, row, "failed", s.failed.size() + " pages failed: " + s.failed
+                            + " (the owner can run --book-id " + row.id + " again, loaded pages are skipped)", total);
+                }
+            }
+        } catch (Exception e) {
+            finish(cfg, row, "failed", e.getClass().getSimpleName() + ": " + clip(e.getMessage(), 200), null);
+            throw e;
+        } finally {
+            if (file != null) Files.deleteIfExists(file);
+        }
+    }
+
+    /** Saves the final status and tells the teacher who asked for the book. */
+    private static void finish(Cfg cfg, CatalogRow row, String status, String note, Integer total) throws Exception {
+        setStatus(cfg, row.id, status, note);
+        System.out.printf("Book #%d is now %s%s%n", row.id, status, note == null ? "" : " (" + note + ")");
+        String text = "loaded".equals(status)
+                ? "✅ Учебник «" + row.title + "» загружен (" + total + " стр.). Теперь он доступен в /plan."
+                : "❌ Не удалось загрузить учебник «" + row.title + "»: " + (note == null ? "ошибка" : note);
+        if (row.requestedBy != null) {
+            notifyTelegram(cfg, row.requestedBy, text);
+        }
+    }
+
+    private static void notifyTelegram(Cfg cfg, long chatId, String text) {
+        if (cfg.botToken.isBlank()) return;
+        try {
+            ObjectNode body = JSON.createObjectNode();
+            body.put("chat_id", chatId);
+            body.put("text", text);
+            HttpRequest req = HttpRequest.newBuilder(URI.create("https://api.telegram.org/bot" + cfg.botToken
+                            + "/sendMessage"))
+                    .timeout(Duration.ofSeconds(20))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)))
+                    .build();
+            HTTP.send(req, HttpResponse.BodyHandlers.discarding());
+        } catch (Exception e) {
+            System.out.println("Could not notify the teacher: " + e.getMessage());
+        }
+    }
+
+    private static final HttpClient DOWNLOAD = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(20))
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
+
+    /** Downloads a PDF into a temp file: only https links of okulyk.kz / okulyk.com, at most maxBytes. */
+    private static Path download(String url, long maxBytes) throws Exception {
+        URI u = URI.create(url);
+        String host = u.getHost() == null ? "" : u.getHost().toLowerCase();
+        boolean trusted = host.equals("okulyk.kz") || host.endsWith(".okulyk.kz") || host.equals("okulyk.com")
+                || host.endsWith(".okulyk.com");
+        if (!"https".equals(u.getScheme()) || !trusted) {
+            throw new IllegalArgumentException("only https links of okulyk.kz / okulyk.com are downloaded: " + url);
+        }
+        HttpRequest req = HttpRequest.newBuilder(u)
+                .timeout(Duration.ofMinutes(10))
+                .header("User-Agent", "Mozilla/5.0 (plan-generator-bot book loader)")
+                .GET()
+                .build();
+        HttpResponse<InputStream> res = DOWNLOAD.send(req, HttpResponse.BodyHandlers.ofInputStream());
+        if (res.statusCode() != 200) {
+            throw new IllegalStateException("download answered HTTP " + res.statusCode());
+        }
+        long declared = res.headers().firstValueAsLong("Content-Length").orElse(-1);
+        if (declared > maxBytes) {
+            throw new IllegalStateException("the PDF is too large: " + declared / 1024 / 1024 + " MB");
+        }
+        Path tmp = Files.createTempFile("book-", ".pdf");
+        try (InputStream in = res.body(); OutputStream out = Files.newOutputStream(tmp)) {
+            byte[] buf = new byte[64 * 1024];
+            long total = 0;
+            int n;
+            boolean first = true;
+            while ((n = in.read(buf)) > 0) {
+                if (first) {
+                    first = false;
+                    if (n < 5 || buf[0] != '%' || buf[1] != 'P' || buf[2] != 'D' || buf[3] != 'F') {
+                        throw new IllegalStateException("the link did not return a PDF file");
+                    }
+                }
+                total += n;
+                if (total > maxBytes) throw new IllegalStateException("the PDF is larger than the limit");
+                out.write(buf, 0, n);
+            }
+        } catch (Exception e) {
+            Files.deleteIfExists(tmp);
+            throw e;
+        }
+        return tmp;
+    }
+
+    private static List<Long> approvedBookIds(Cfg cfg) throws Exception {
+        List<Long> ids = new ArrayList<>();
+        try (Connection c = connect(cfg);
+             PreparedStatement ps = c.prepareStatement("SELECT id FROM plangen.books WHERE status = 'approved' "
+                     + "AND pdf_url IS NOT NULL ORDER BY id");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) ids.add(rs.getLong(1));
+        }
+        return ids;
+    }
+
+    private static CatalogRow readRow(Connection c, long id) throws Exception {
+        try (PreparedStatement ps = c.prepareStatement("SELECT id, title, subject, grade, pdf_url, status, "
+                + "requested_by FROM plangen.books WHERE id = ?")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return null;
+                int g = rs.getInt(4);
+                boolean noGrade = rs.wasNull();
+                long rb = rs.getLong(7);
+                boolean noRb = rs.wasNull();
+                return new CatalogRow(rs.getLong(1), rs.getString(2), rs.getString(3), noGrade ? null : g,
+                        rs.getString(5), rs.getString(6), noRb ? null : rb);
+            }
+        }
+    }
+
+    private static void setStatus(Cfg cfg, long id, String status, String note) throws Exception {
+        try (Connection c = connect(cfg);
+             PreparedStatement ps = c.prepareStatement("UPDATE plangen.books SET status = ?, status_note = ? "
+                     + "WHERE id = ?")) {
+            ps.setString(1, status);
+            ps.setString(2, note);
+            ps.setLong(3, id);
+            ps.executeUpdate();
+        }
+    }
+
+    private static void setPages(Connection c, long id, int pages) throws Exception {
+        try (PreparedStatement ps = c.prepareStatement("UPDATE plangen.books SET pages = ? WHERE id = ?")) {
+            ps.setInt(1, pages);
+            ps.setLong(2, id);
+            ps.executeUpdate();
         }
     }
 
@@ -276,8 +530,8 @@ public final class Main {
 
     // ------------------------------------------------------------------ database
 
-    private static Connection connect(String url, String user, String pass) throws Exception {
-        return DriverManager.getConnection(url, user, pass);
+    private static Connection connect(Cfg cfg) throws Exception {
+        return DriverManager.getConnection(cfg.dbUrl, cfg.dbUser, cfg.dbPass);
     }
 
     /** Kind of the book: student's book or workbook, the track of grades 10-11, the quarters it covers. */

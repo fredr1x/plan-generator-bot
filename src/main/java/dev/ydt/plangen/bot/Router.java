@@ -24,7 +24,7 @@ public class Router {
             /plan — составить план урока
             /classes — мои классы
             /schedule — расписание
-            /books — загруженные учебники
+            /books — каталог книг: добавить по ссылке okulyk.kz, привязать к классам
             /history — прошлые планы
             /profile — Ф.И.О., школа, предмет, язык, длительность урока
             /cancel — отменить текущий ввод
@@ -50,6 +50,9 @@ public class Router {
 
     @Inject
     PlanFlow plan;
+
+    @Inject
+    CatalogFlow catalog;
 
     @Transactional
     public void handle(Update u) {
@@ -115,7 +118,7 @@ public class Router {
                 }
                 case "books" -> {
                     ConvState.clear(uid);
-                    plan.books(chat);
+                    catalog.list(uid, chat);
                     return;
                 }
                 case "history" -> {
@@ -154,6 +157,8 @@ public class Router {
             schedule.onText(uid, chat, st, t);
         } else if (st.state.startsWith("PLAN_")) {
             plan.onText(uid, chat, st, t);
+        } else if (st.state.startsWith("CAT_")) {
+            catalog.onText(uid, chat, st, t);
         }
     }
 
@@ -171,6 +176,7 @@ public class Router {
                 case "cls" -> classes.onCallback(uid, chat, cb.id(), p);
                 case "sch" -> schedule.onCallback(uid, chat, cb.id(), p);
                 case "pl" -> plan.onCallback(uid, chat, msg, cb.id(), p);
+                case "cat" -> catalog.onCallback(uid, chat, msg, cb.id(), p);
                 default -> bot.answer(cb.id(), null);
             }
         } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {

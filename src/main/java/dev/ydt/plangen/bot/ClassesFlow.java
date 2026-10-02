@@ -67,8 +67,8 @@ public class ClassesFlow {
                 sb.append('\n');
                 rows.add(c.grade >= 10
                         ? List.of(btn("🗑 " + c.label(), "cls:del:" + c.id),
-                                btn("🧭 направление", "cls:trkask:" + c.id))
-                        : List.of(btn("🗑 " + c.label(), "cls:del:" + c.id)));
+                                btn("📚 Книги", "cat:cls:" + c.id), btn("🧭 направление", "cls:trkask:" + c.id))
+                        : List.of(btn("🗑 " + c.label(), "cls:del:" + c.id), btn("📚 Книги", "cat:cls:" + c.id)));
             }
         }
         rows.add(btn("➕ Добавить / обновить классы", "cls:add"));

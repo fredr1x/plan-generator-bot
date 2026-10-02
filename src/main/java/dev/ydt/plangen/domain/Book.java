@@ -52,6 +52,56 @@ public class Book extends PanacheEntityBase {
     @Column(name = "part_note")
     public String partNote;
 
+    public String authors;
+
+    public String publisher;
+
+    @Column(name = "pub_year")
+    public Integer pubYear;
+
+    public String language;
+
+    @Column(name = "source_url")
+    public String sourceUrl;
+
+    @Column(name = "cover_url")
+    public String coverUrl;
+
+    @Column(name = "pdf_url")
+    public String pdfUrl;
+
+    /** catalog | requested | approved | loading | loaded | failed. */
+    public String status = STATUS_LOADED;
+
+    @Column(name = "requested_by")
+    public Long requestedBy;
+
+    @Column(name = "status_note")
+    public String statusNote;
+
+    public static final String STATUS_CATALOG = "catalog";
+    public static final String STATUS_REQUESTED = "requested";
+    public static final String STATUS_APPROVED = "approved";
+    public static final String STATUS_LOADING = "loading";
+    public static final String STATUS_LOADED = "loaded";
+    public static final String STATUS_FAILED = "failed";
+
+    public boolean isLoaded() {
+        return STATUS_LOADED.equals(status);
+    }
+
+    /** Icon and short words for the book list. */
+    public String statusLabel() {
+        return switch (status == null ? STATUS_LOADED : status) {
+            case STATUS_CATALOG -> "📋 в каталоге, страницы не загружены";
+            case STATUS_REQUESTED -> "⏳ ждёт одобрения загрузки";
+            case STATUS_APPROVED -> "🟡 одобрена, ждёт загрузки";
+            case STATUS_LOADING -> "🟡 загружается";
+            case STATUS_FAILED -> "❌ загрузка не удалась";
+            default -> "✅ загружена";
+        };
+    }
+
     @Column(name = "created_at")
     public Instant createdAt = Instant.now();
 
@@ -90,20 +140,41 @@ public class Book extends PanacheEntityBase {
      * The ones covering the lesson's quarter come first, then student's books before workbooks.
      */
     public static List<Book> candidates(int grade, Set<String> tracks, int quarter) {
-        List<Book> all = list("grade is null or grade = ?1", grade);
+        List<Book> all = list("status = 'loaded' and (grade is null or grade = ?1)", grade);
         List<Book> out = new ArrayList<>();
         for (Book b : all) {
             if (b.track == null || tracks.isEmpty() || tracks.contains(b.track)) {
                 out.add(b);
             }
         }
-        out.sort(Comparator.<Book, Boolean>comparing(b -> !b.coversQuarter(quarter))
+        sortForQuarter(out, quarter);
+        return out;
+    }
+
+    /** Books covering the lesson's quarter first, then student's books before workbooks, then by title. */
+    public static void sortForQuarter(List<Book> books, int quarter) {
+        books.sort(Comparator.<Book, Boolean>comparing(b -> !b.coversQuarter(quarter))
                 .thenComparing(b -> WORKBOOK.equals(b.bookType))
                 .thenComparing(b -> b.title));
-        return out;
     }
 
     public static List<Book> allByTitle() {
         return list("order by title");
+    }
+
+    /** Loaded books the teacher linked to any of these classes. */
+    public static List<Book> linkedLoaded(java.util.Collection<Long> classIds) {
+        if (classIds.isEmpty()) return new ArrayList<>();
+        return list("status = 'loaded' and id in (select cb.bookId from ClassBook cb where cb.classId in ?1) "
+                + "order by title", classIds);
+    }
+
+    /** Catalog books that fit a class: same grade (or no grade) and a matching track for grades 10-11. */
+    public static List<Book> fittingClass(int grade, String track) {
+        List<Book> out = new ArrayList<>();
+        for (Book b : Book.<Book>list("grade is null or grade = ?1 order by title", grade)) {
+            if (b.track == null || track == null || b.track.equals(track)) out.add(b);
+        }
+        return out;
     }
 }
