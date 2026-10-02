@@ -35,6 +35,9 @@ public class BookService {
 
     public record Suggestion(String spec, String label) {}
 
+    /** Section ("Unit 2. Holidays and travel") and topic ("At home") of a page, either may be empty. */
+    public record Heading(String section, String topic) {}
+
     /** An exercise key from the page data: shown page number, exercise number, "exact" or "sample", the key. */
     public record Answer(int page, String number, String type, String key) {}
 
@@ -173,6 +176,41 @@ public class BookService {
             sb.append(" — упражнений: ").append(ex);
         }
         return sb.toString();
+    }
+
+    private static final Pattern UNIT_OPENER = Pattern.compile("^\\s*(\\d{1,2})\\s*[.:)\\-–]?\\s+(\\p{L}.{2,})$");
+    private static final Pattern SKILL_PREFIX = Pattern.compile(
+            "(?i)^(vocabulary and listening|vocabulary puzzles|vocabulary|grammar|reading for pleasure|reading|"
+                    + "listening|speaking|writing|communication|culture|clil|review|skills?)\\b[\\s■▪•\\-–—:?]*");
+    private static final Pattern CAN_DO = Pattern.compile("(?i)\\s*\\bI can\\b.*$");
+
+    /**
+     * The section and topic of a lesson as the textbook names them. The unit comes from the nearest unit opener
+     * (a page whose unit starts with the unit number, "2 Holidays and travel") at or before the page, because the
+     * following pages of a unit do not repeat it; the topic is the page heading without the skill label
+     * ("VOCABULARY At home" becomes "At home") and without the "I can ..." line.
+     */
+    public Heading headingFor(BookPage page) {
+        String section = "";
+        List<BookPage> all = BookPage.ofBook(page.bookId);
+        for (int i = all.size() - 1; i >= 0 && section.isEmpty(); i--) {
+            BookPage p = all.get(i);
+            if (p.pdfPage > page.pdfPage || blank(p.unit)) continue;
+            Matcher m = UNIT_OPENER.matcher(oneLine(p.unit));
+            if (m.matches()) {
+                section = "Unit " + m.group(1) + ". " + m.group(2).strip();
+            }
+        }
+        if (section.isEmpty() && !blank(page.unit) && !oneLine(page.unit).equalsIgnoreCase(oneLine(page.heading))
+                && !SKILL_PREFIX.matcher(oneLine(page.unit)).find()) {
+            section = oneLine(page.unit);
+        }
+        String topic = oneLine(page.heading);
+        String stripped = CAN_DO.matcher(SKILL_PREFIX.matcher(topic).replaceFirst("")).replaceFirst("").strip();
+        if (!stripped.isEmpty()) {
+            topic = stripped;
+        }
+        return new Heading(section, topic);
     }
 
     /** The answer keys of the exercises on the pages (exercises without a key are left out). */

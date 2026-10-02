@@ -283,6 +283,15 @@ public class PlanFlow {
                 bot.answer(cbId, null);
                 copyPlan(uid, chat, d);
             }
+            case "frombook" -> {
+                bot.answer(cbId, null);
+                BookService.Heading h = bookFlow.proposal(d);
+                if (h != null) {
+                    if (!h.section().isBlank()) d.section = h.section();
+                    if (!h.topic().isBlank()) d.topic = h.topic();
+                }
+                askNext(uid, chat, d);
+            }
             case "bk" -> {
                 bot.answer(cbId, null);
                 if (bookFlow.onChoose(uid, chat, d, classes(uid, d), LocalDate.parse(d.date), p[2])) {
@@ -411,6 +420,11 @@ public class PlanFlow {
         Kb.Rows rows = Kb.rows().add(btn("✅ Составить план", "pl:go"));
         if (d.sourcePlanId != null) {
             rows.add(btn("♻️ Тот же план без ИИ (бесплатно)", "pl:copy"));
+        }
+        BookService.Heading fromBook = bookFlow.proposal(d);
+        if (fromBook != null) {
+            rows.add(btn(Kb.trunc("📖 Из книги: " + (fromBook.section().isBlank() ? "" : fromBook.section() + " · ")
+                    + fromBook.topic(), 60), "pl:frombook"));
         }
         rows.add(btn("✏️ Дата", "pl:edit:date"), btn("✏️ Классы", "pl:edit:classes"))
                 .add(btn("✏️ Раздел", "pl:edit:section"), btn("✏️ Тема", "pl:edit:topic"),

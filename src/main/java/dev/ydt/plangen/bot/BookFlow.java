@@ -207,6 +207,26 @@ public class BookFlow {
         return sb.length() == 0 ? null : sb.toString();
     }
 
+    /**
+     * Section and topic as the first chosen page names them, or null when there is no book or when they are
+     * the same as what the teacher already has.
+     */
+    BookService.Heading proposal(Draft d) {
+        if (d.books.isEmpty()) return null;
+        BookRef r = d.books.get(0);
+        if (r.bookId == null || r.pages == null || r.pages.isBlank()) return null;
+        List<BookPage> pages = books.find(r.bookId, r.pages).pages();
+        if (pages.isEmpty()) return null;
+        BookService.Heading h = books.headingFor(pages.get(0));
+        boolean sameSection = h.section().isBlank() || h.section().equalsIgnoreCase(nz(d.section));
+        boolean sameTopic = h.topic().isBlank() || h.topic().equalsIgnoreCase(nz(d.topic));
+        return sameSection && sameTopic ? null : h;
+    }
+
+    private static String nz(String s) {
+        return s == null ? "" : s.strip();
+    }
+
     /** The answer keys of all exercises on the chosen pages, for AnswerKeys.inject. */
     List<BookService.Answer> answersFor(List<BookRef> refs) {
         List<BookService.Answer> out = new ArrayList<>();
