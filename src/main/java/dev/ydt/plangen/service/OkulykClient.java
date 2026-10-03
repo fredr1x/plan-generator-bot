@@ -132,4 +132,89 @@ public class OkulykClient {
         return sb.toString().replace("&nbsp;", " ").replace("&amp;", "&").replace("&quot;", "\"")
                 .replaceAll("\\s+", " ").strip();
     }
+
+    // ------------------------------------------------------------------ the list of books of a grade
+
+    /** One book in a list: id and slug make the link https://okulyk.kz/slug/id/. */
+    public record Listed(String id, String slug, String url, String title, Integer year, String language) {}
+
+    private static final Pattern HEADING = Pattern.compile("<h([1-6])[^>]*>(.*?)</h\\1>", Pattern.DOTALL);
+    private static final Pattern LISTED = Pattern.compile(
+            "<a href=\"(https://okulyk\\.kz/([a-z0-9-]+)/(\\d+)/)\"[^>]*class=\"book\"[^>]*>(.*?)</a>", Pattern.DOTALL);
+    private static final Pattern LISTED_TITLE = Pattern.compile("<span class=\"book-title\">(.*?)</span>", Pattern.DOTALL);
+    private static final Pattern LISTED_YEAR = Pattern.compile("<span class=\"new-year[^>]*>\\s*(\\d{4})", Pattern.DOTALL);
+    private static final Pattern LISTED_FLAG = Pattern.compile("<span class=\"flag[^\"]*\">(.*?)</span>", Pattern.DOTALL);
+
+    private static final long LIST_TTL_MS = 6L * 60 * 60 * 1000;
+    private final java.util.Map<Integer, java.util.Map.Entry<Long, java.util.Map<String, java.util.List<Listed>>>>
+            listCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * The books of one subject for a grade, from the page okulyk.kz/N-class/ (one request, kept for six hours).
+     * Empty when the page has no section with that subject name.
+     */
+    public java.util.List<Listed> listGrade(int grade, String subject) throws IOException, InterruptedException {
+        if (grade < 1 || grade > 11 || subject == null || subject.isBlank()) {
+            return java.util.List.of();
+        }
+        var cached = listCache.get(grade);
+        java.util.Map<String, java.util.List<Listed>> sections;
+        if (cached != null && System.currentTimeMillis() - cached.getKey() < LIST_TTL_MS) {
+            sections = cached.getValue();
+        } else {
+            String url = "https://okulyk.kz/" + grade + "-class/";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(20))
+                    .header("User-Agent", "Mozilla/5.0 (plan-generator-bot; reads one list when a teacher opens it)")
+                    .GET()
+                    .build();
+            HttpResponse<String> res = HTTP.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (res.statusCode() != 200 || res.body().length() > 4_000_000) {
+                return java.util.List.of();
+            }
+            sections = parseGrade(res.body());
+            listCache.put(grade, java.util.Map.entry(System.currentTimeMillis(), sections));
+        }
+        String want = subject.strip().toLowerCase(Locale.ROOT);
+        for (var e : sections.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(want)) return e.getValue();
+        }
+        // the name in the bot's list and the heading on the site may differ a little ("Русский язык" and
+        // "Русский язык и литература"): sections that contain one another are shown together
+        java.util.List<Listed> close = new java.util.ArrayList<>();
+        for (var e : sections.entrySet()) {
+            String key = e.getKey().toLowerCase(Locale.ROOT);
+            if (key.contains(want) || want.contains(key)) close.addAll(e.getValue());
+        }
+        return close;
+    }
+
+    /** Pure parsing: subject heading to the books that follow it until the next heading. */
+    public static java.util.Map<String, java.util.List<Listed>> parseGrade(String html) {
+        java.util.TreeMap<Integer, String> headings = new java.util.TreeMap<>();
+        Matcher h = HEADING.matcher(html);
+        while (h.find()) {
+            String text = clean(h.group(2));
+            if (!text.isEmpty()) headings.put(h.start(), text);
+        }
+        java.util.Map<String, java.util.List<Listed>> out = new java.util.LinkedHashMap<>();
+        Matcher b = LISTED.matcher(html);
+        while (b.find()) {
+            var head = headings.floorEntry(b.start());
+            if (head == null) continue;
+            String inner = b.group(4);
+            Matcher t = LISTED_TITLE.matcher(inner);
+            if (!t.find()) continue;
+            String title = clean(t.group(1));
+            Matcher y = LISTED_YEAR.matcher(inner);
+            Matcher f = LISTED_FLAG.matcher(inner);
+            java.util.List<Listed> list = out.computeIfAbsent(head.getValue(), k -> new java.util.ArrayList<>());
+            boolean dup = list.stream().anyMatch(x -> x.id().equals(b.group(3)));
+            if (!dup && !title.isEmpty()) {
+                list.add(new Listed(b.group(3), b.group(2), b.group(1), title,
+                        y.find() ? Integer.valueOf(y.group(1)) : null, f.find() ? clean(f.group(1)) : null));
+            }
+        }
+        return out;
+    }
 }

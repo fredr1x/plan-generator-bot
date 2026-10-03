@@ -99,7 +99,8 @@ public class CatalogFlow {
                         .append(" стр.)");
             }
         }
-        Kb.Rows rows = Kb.rows().add(btn("➕ Добавить книгу по ссылке", "cat:add"));
+        Kb.Rows rows = Kb.rows().add(btn("🔎 Выбрать из списка okulyk.kz", "cat:ol"))
+                .add(btn("➕ Добавить книгу по ссылке", "cat:add"));
         for (SchoolClass c : SchoolClass.forTeacher(uid)) {
             rows.add(btn("📚 Книги для " + c.label(), "cat:cls:" + c.id));
         }
@@ -118,7 +119,11 @@ public class CatalogFlow {
             bot.send(chat, "Пришлите ссылку на страницу книги на okulyk.kz (или /cancel).", null);
             return;
         }
-        String url = m.group().replaceAll("[)\\],.;]+$", "");
+        addByUrl(uid, chat, m.group().replaceAll("[)\\],.;]+$", ""));
+    }
+
+    /** Reads the page of a book by its link and starts adding it (or shows the entry that already exists). */
+    private void addByUrl(long uid, long chat, String url) {
         if (!OkulykClient.isAllowed(url)) {
             bot.send(chat, "Пока принимаю только ссылки на okulyk.kz (https://okulyk.kz/...). Другие книги можно "
                     + "добавить через владельца бота.", null);
@@ -191,6 +196,64 @@ public class CatalogFlow {
         }
     }
 
+    /** The books of the teacher's subject for a grade from okulyk.kz, each with its status in our base. */
+    private void showList(long uid, long chat, int grade) {
+        dev.ydt.plangen.domain.Teacher t = dev.ydt.plangen.domain.Teacher.findById(uid);
+        String subject = t == null ? null : t.subject;
+        java.util.List<OkulykClient.Listed> books;
+        try {
+            books = okulyk.listGrade(grade, subject);
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            LOG.warnf("okulyk list failed for grade %d: %s", grade, e.getMessage());
+            bot.send(chat, "Сайт okulyk.kz сейчас не отвечает. Попробуйте позже или добавьте книгу по ссылке.", null);
+            return;
+        }
+        if (books.isEmpty()) {
+            bot.send(chat, "В списке okulyk.kz для " + grade + " класса нет книг по предмету «" + subject
+                    + "». Можно добавить книгу по ссылке.", Kb.row(btn("➕ По ссылке", "cat:add")));
+            return;
+        }
+        StringBuilder sb = new StringBuilder("📚 okulyk.kz · ").append(subject).append(" · ").append(grade)
+                .append(" класс\n");
+        Kb.Rows rows = Kb.rows();
+        java.util.List<dev.ydt.plangen.telegram.Dto.InlineButton> btns = new ArrayList<>();
+        int n = 0;
+        for (OkulykClient.Listed b : books) {
+            n++;
+            Book known = known(b);
+            sb.append("\n").append(n).append(". ").append(Kb.trunc(b.title(), 90));
+            if (b.year() != null) sb.append(" · ").append(b.year());
+            if (b.language() != null) sb.append(" · ").append(b.language());
+            sb.append("\n    ").append(known == null ? "➕ нет в базе" : shortStatus(known));
+            btns.add(btn((known != null && known.isLoaded() ? "✅ " : "") + n, "cat:op:" + b.slug() + ":" + b.id()));
+        }
+        for (int i = 0; i < btns.size(); i += 4) rows.add(btns.subList(i, Math.min(i + 4, btns.size())));
+        sb.append("\n\nНажмите номер книги: добавлю её в каталог (если ещё нет) и предложу привязать к классам.");
+        bot.send(chat, Kb.trunc(sb.toString(), 3900), rows.build());
+    }
+
+    /** The catalog entry for a listed book: by link, otherwise by the same title. */
+    private static Book known(OkulykClient.Listed b) {
+        Book byLink = byUrl(b.url());
+        if (byLink != null) return byLink;
+        String title = b.title().strip().toLowerCase();
+        for (Book x : Book.<Book>listAll()) {
+            if (x.title != null && x.title.strip().toLowerCase().equals(title)) return x;
+        }
+        return null;
+    }
+
+    private static String shortStatus(Book b) {
+        return switch (b.status == null ? Book.STATUS_LOADED : b.status) {
+            case Book.STATUS_CATALOG -> "📋 в каталоге, страницы не загружены";
+            case Book.STATUS_REQUESTED -> "⏳ ждёт одобрения загрузки";
+            case Book.STATUS_APPROVED, Book.STATUS_LOADING -> "🟡 загружается";
+            case Book.STATUS_FAILED -> "❌ загрузка не удалась";
+            default -> "✅ загружена, есть в базе";
+        };
+    }
+
     /** The same book under another spelling of the link: host (.kz/.com, www), http, query, trailing slash, case. */
     static String normalizeUrl(String url) {
         if (url == null) return "";
@@ -260,6 +323,35 @@ public class CatalogFlow {
 
     public void onCallback(long uid, long chat, long msgId, String cbId, String[] p) {
         switch (p[1]) {
+            case "ol" -> {
+                bot.answer(cbId, null);
+                java.util.TreeSet<Integer> grades = new java.util.TreeSet<>();
+                SchoolClass.<SchoolClass>forTeacher(uid).forEach(c -> grades.add(c.grade));
+                if (grades.isEmpty()) for (int g = 1; g <= 11; g++) grades.add(g);
+                java.util.List<dev.ydt.plangen.telegram.Dto.InlineButton> btns = new ArrayList<>();
+                for (int g : grades) btns.add(btn(g + " класс", "cat:og:" + g));
+                Kb.Rows rows = Kb.rows();
+                for (int i = 0; i < btns.size(); i += 3) rows.add(btns.subList(i, Math.min(i + 3, btns.size())));
+                rows.add(btn("Другой класс (1–11)", "cat:oa"));
+                bot.send(chat, "Книги какого класса показать из списка okulyk.kz?", rows.build());
+            }
+            case "oa" -> {
+                bot.answer(cbId, null);
+                java.util.List<dev.ydt.plangen.telegram.Dto.InlineButton> btns = new ArrayList<>();
+                for (int g = 1; g <= 11; g++) btns.add(btn(g + " класс", "cat:og:" + g));
+                Kb.Rows rows = Kb.rows();
+                for (int i = 0; i < btns.size(); i += 4) rows.add(btns.subList(i, Math.min(i + 4, btns.size())));
+                bot.send(chat, "Выберите класс:", rows.build());
+            }
+            case "og" -> {
+                bot.answer(cbId, null);
+                showList(uid, chat, Integer.parseInt(p[2]));
+            }
+            case "op" -> {
+                bot.answer(cbId, null);
+                if (!p[2].matches("[a-z0-9-]{2,60}") || !p[3].matches("\\d{1,7}")) return;
+                addByUrl(uid, chat, "https://okulyk.kz/" + p[2] + "/" + p[3] + "/");
+            }
             case "add" -> {
                 bot.answer(cbId, null);
                 ConvState.set(uid, CAT_URL, null);
