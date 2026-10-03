@@ -136,7 +136,8 @@ public class KtpFlow {
                 if (c != null) sb.append(classLine(k, c));
             }
             rows.add(btn("📋 Юниты и темы · " + k.gradeLabel(), "ktp:units:" + k.id));
-            rows.add(btn("🔗 Классы", "ktp:lk:" + k.id), btn("📅 Даты уроков", "ktp:dates:" + k.id));
+            rows.add(btn("🔗 Классы", "ktp:lk:" + k.id), btn("📅 Пересчитать даты", "ktp:dates:" + k.id));
+            rows.add(btn("🔄 Даты заново с начала года", "ktp:rd:" + k.id));
             rows.add(btn("✏️ Исправить урок", "ktp:edit:" + k.id), btn("🗑 Удалить", "ktp:del:" + k.id));
         }
         rows.add(btn("➕ Загрузить КТП", "ktp:new"));
@@ -174,12 +175,12 @@ public class KtpFlow {
         KtpClass link = KtpClass.find("ktpId = ?1 and classId = ?2", k.id, c.id).firstResult();
         if (link != null) {
             link.delete();
-            KtpSlot.delete("ktpId = ?1 and classId = ?2 and status = 'planned'", k.id, c.id);
+            KtpSlot.delete("ktpId = ?1 and classId = ?2", k.id, c.id);
             LOG.infof("[ktp] class %s unlinked from KTP #%d", c.label(), k.id);
             return;
         }
         KtpClass.delete("classId = ?1 and ktpId <> ?2", c.id, k.id);
-        KtpSlot.delete("classId = ?1 and ktpId <> ?2 and status = 'planned'", c.id, k.id);
+        KtpSlot.delete("classId = ?1 and ktpId <> ?2", c.id, k.id);
         KtpClass.getEntityManager().flush();
         KtpClass add = new KtpClass();
         add.ktpId = k.id;
@@ -201,9 +202,10 @@ public class KtpFlow {
         }
         KtpSlot next = live.stream().filter(x -> !x.slotDate.isBefore(time.today())).findFirst().orElse(null);
         long prepared = live.stream().filter(x -> KtpSlot.PREPARED.equals(x.status)).count();
+        long left = live.stream().filter(x -> !x.slotDate.isBefore(time.today())).count();
         sb.append("\n    даты: ").append(live.get(0).slotDate.format(Dates.SHORT)).append("–")
-                .append(live.get(live.size() - 1).slotDate.format(Dates.SHORT)).append(", осталось уроков: ")
-                .append(live.size()).append(", планов готово: ").append(prepared);
+                .append(live.get(live.size() - 1).slotDate.format(Dates.SHORT)).append(", впереди уроков: ")
+                .append(left).append(" из ").append(live.size()).append(", планов готово: ").append(prepared);
         if (next != null) {
             KtpLesson l = KtpLesson.findById(next.lessonId);
             sb.append("\n    ближайший: ").append(next.slotDate.format(Dates.SHORT)).append(" · ")
@@ -523,18 +525,7 @@ public class KtpFlow {
 
     /** Dates need a starting point: from the first lesson in a new year, or from the lesson the class is at now. */
     private void askStart(long uid, long chat, Ktp k) {
-        LocalDate today = time.today();
-        List<SchoolTerm> terms = SchoolTerm.all();
-        boolean midYear = !terms.isEmpty() && terms.get(0).startsOn.isBefore(today)
-                && !terms.get(terms.size() - 1).endsOn.isBefore(today);
-        if (!midYear) {
-            buildDates(uid, chat, k, 1);
-            return;
-        }
-        ConvState.set(uid, KTP_START, String.valueOf(k.id));
-        bot.send(chat, "📅 Расставляю даты уроков по расписанию и календарю. Учебный год уже идёт: какой по счёту "
-                + "урок КТП у вас следующий? Напишите номер (1–" + KtpLesson.count("ktpId", k.id) + ").",
-                Kb.row(btn("С первого урока", "ktp:start:" + k.id + ":1")));
+        buildDates(uid, chat, k, 1); // always from the first day of the school year and the first lesson
     }
 
     /** Places the lessons of the KTP on dates for every class that follows it, starting from startSeq. */
@@ -635,16 +626,36 @@ public class KtpFlow {
                 if (needDates) askStart(uid, chat, k);
                 else start(uid, chat);
             }
+            case "rd" -> {
+                bot.answer(cbId, null);
+                Ktp k = ownedKtp(uid, Long.parseLong(p[2]));
+                if (k == null) return;
+                bot.send(chat, "Расставить даты КТП (" + k.gradeLabel() + ") заново, с первого дня учебного года и с "
+                        + "первого урока? Прежние даты и отметки «план готов» у уроков сбросятся. Сами составленные "
+                        + "планы останутся в /history, КТП и привязанные классы тоже.",
+                        Kb.row(btn("Да, заново", "ktp:rdok:" + k.id), btn("Нет", "ktp:list")));
+            }
+            case "rdok" -> {
+                bot.answer(cbId, null);
+                Ktp k = ownedKtp(uid, Long.parseLong(p[2]));
+                if (k == null) return;
+                long n = KtpSlot.delete("ktpId", k.id);
+                KtpSlot.getEntityManager().flush();
+                LOG.infof("[ktp] user=%d reset the dates of KTP #%d (%d slots removed)", uid, k.id, n);
+                buildDates(uid, chat, k, 1);
+            }
             case "dates" -> {
                 bot.answer(cbId, null);
                 Ktp k = ownedKtp(uid, Long.parseLong(p[2]));
                 if (k == null) return;
-                if (KtpSlot.count("ktpId", k.id) > 0) {
-                    var built = slots.rebuildAll(uid);
-                    bot.send(chat, built.isEmpty() ? "Нечего пересчитывать." : "Пересчитал даты.\n\n"
-                            + SlotService.describeAll(built), null);
-                } else {
-                    askStart(uid, chat, k);
+                var built = slots.rebuildAll(uid);
+                if (!built.isEmpty()) {
+                    bot.send(chat, "Пересчитал даты.\n\n" + SlotService.describeAll(built), null);
+                }
+                boolean missing = KtpClass.ofKtp(k.id).stream().anyMatch(l ->
+                        KtpSlot.count("ktpId = ?1 and classId = ?2", k.id, l.classId) == 0);
+                if (missing || built.isEmpty()) {
+                    askStart(uid, chat, k); // places the classes that have no dates yet
                 }
             }
             case "start" -> {

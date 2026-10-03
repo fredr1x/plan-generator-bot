@@ -57,6 +57,9 @@ public class KtpService {
             e.persist();
         }
         for (Long classId : classIds) {
+            // a class follows one KTP: it leaves the other one (with the dates it had there)
+            KtpClass.delete("classId = ?1 and ktpId <> ?2", classId, k.id);
+            dev.ydt.plangen.domain.KtpSlot.delete("classId = ?1 and ktpId <> ?2", classId, k.id);
             KtpClass link = new KtpClass();
             link.ktpId = k.id;
             link.classId = classId;

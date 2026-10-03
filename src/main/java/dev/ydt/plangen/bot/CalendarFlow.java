@@ -8,6 +8,7 @@ import dev.ydt.plangen.domain.ConvState;
 import dev.ydt.plangen.domain.KtpSlot;
 import dev.ydt.plangen.domain.NonTeachingDay;
 import dev.ydt.plangen.domain.SchoolTerm;
+import dev.ydt.plangen.domain.Teacher;
 import dev.ydt.plangen.service.SlotService;
 import dev.ydt.plangen.service.TimeService;
 import dev.ydt.plangen.telegram.Messenger;
@@ -128,7 +129,7 @@ public class CalendarFlow {
                 if (n == null || !mayEdit(uid, n)) return;
                 n.delete();
                 LOG.infof("[calendar] user=%d removed day off %s", uid, n.day);
-                bot.send(chat, "Убрал. " + recalc(uid), null);
+                bot.send(chat, "Убрал. " + recalc(uid, n.teacherId == null), null);
             }
             default -> { }
         }
@@ -185,11 +186,17 @@ public class CalendarFlow {
         if (!hit.isEmpty()) {
             sb.append("\nВ эти дни были уроки: ").append(hit.size()).append(". Сдвигаю их на ближайшие свободные.");
         }
-        bot.send(chat, sb + "\n\n" + recalc(uid), null);
+        bot.send(chat, sb + "\n\n" + recalc(uid, everybody), null);
     }
 
     /** Dates are placed again after the calendar changed; the text tells what came out. */
-    private String recalc(long uid) {
+    private String recalc(long uid, boolean forEverybody) {
+        if (forEverybody) {
+            // a day off for all teachers moves the lessons of the other teachers too (silently)
+            for (Teacher t : Teacher.<Teacher>listAll()) {
+                if (t.id != uid) slots.rebuildAll(t.id);
+            }
+        }
         var built = slots.rebuildAll(uid);
         return built.isEmpty() ? "Дат уроков по КТП пока нет, пересчитывать нечего." : SlotService.describeAll(built);
     }

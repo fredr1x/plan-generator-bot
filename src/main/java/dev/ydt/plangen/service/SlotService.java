@@ -45,25 +45,31 @@ public class SlotService {
     TimeService time;
 
     /**
-     * Builds the dates of one class. Lessons before startSeq count as taught; lessons that are prepared, done or
-     * lie in the past keep their slots; everything else is placed again from today.
+     * Builds the dates of one class. The first time they are placed from the first day of the school year, from
+     * the first lesson on. Later (a change of the timetable or the calendar) lessons that are prepared, done or lie
+     * in the past keep their slots and everything else is placed again from today.
      */
     public Result build(Ktp k, SchoolClass c, int startSeq) {
         LocalDate today = time.today();
         List<ScheduleEntry> entries = ScheduleEntry.list("classId", c.id);
         if (entries.isEmpty()) {
+            // nothing is taught any more: the lessons that are still ahead lose their dates
+            KtpSlot.delete("ktpId = ?1 and classId = ?2 and status = 'planned' and slotDate >= ?3", k.id, c.id, today);
             return new Result(List.of(), 0, 0, 0, null, null, true, false, false);
         }
-        List<SchoolTerm> terms = activeTerms(today);
+        List<SchoolTerm> terms = yearTerms(today);
         if (terms.isEmpty()) {
             return new Result(List.of(), 0, 0, entries.size(), null, null, false, true, false);
         }
-        LocalDate from = today.isBefore(terms.get(0).startsOn) ? terms.get(0).startsOn : today;
-
         List<KtpLesson> lessons = KtpLesson.ofKtp(k.id);
         List<KtpSlot> existing = KtpSlot.list("ktpId = ?1 and classId = ?2", k.id, c.id);
+        LocalDate yearStart = terms.get(0).startsOn;
+        LocalDate from = existing.isEmpty() || today.isBefore(yearStart) ? yearStart : today;
         Set<Long> fixed = new HashSet<>();
         Set<String> taken = new HashSet<>();
+        for (KtpSlot other : KtpSlot.<KtpSlot>list("classId = ?1 and ktpId <> ?2", c.id, k.id)) {
+            taken.add(key(other.slotDate, other.lessonNo));
+        }
         for (KtpSlot s : existing) {
             boolean keep = !KtpSlot.PLANNED.equals(s.status) || s.slotDate.isBefore(from);
             if (keep) {
@@ -76,9 +82,10 @@ public class SlotService {
 
         List<KtpLesson> queue = lessons.stream().filter(l -> l.seq >= startSeq && !fixed.contains(l.id)).toList();
 
-        // dates written in the KTP file are used as they are when every lesson has one
-        if (existing.isEmpty() && !lessons.isEmpty() && lessons.stream().allMatch(l -> l.sourceDate != null)) {
-            return fromFileDates(k, c, queue, entries);
+        // dates written in the KTP file are used as they are when every lesson has one, and they do not move later
+        if (!lessons.isEmpty() && lessons.stream().allMatch(l -> l.sourceDate != null)) {
+            if (existing.isEmpty()) return fromFileDates(k, c, queue, entries);
+            return new Result(List.of(), 0, 0, entries.size(), null, null, false, false, true);
         }
 
         List<NonTeachingDay> off = NonTeachingDay.visible(c.teacherId, from).stream()
@@ -173,11 +180,16 @@ public class SlotService {
     }
 
     /** Terms of the school year that is going on (or the next one), without the terms that are over. */
-    private static List<SchoolTerm> activeTerms(LocalDate today) {
+    private static List<SchoolTerm> yearTerms(LocalDate today) {
         List<SchoolTerm> out = new ArrayList<>();
         String year = null;
         for (SchoolTerm t : SchoolTerm.all()) {
-            if (t.endsOn.isBefore(today)) continue;
+            if (year == null && t.endsOn.isBefore(today)) {
+                // a term that is over belongs to the year that is going on only when a later term of the same year exists
+                boolean sameYearLater = SchoolTerm.all().stream()
+                        .anyMatch(x -> x.yearName.equals(t.yearName) && !x.endsOn.isBefore(today));
+                if (!sameYearLater) continue;
+            }
             if (year == null) year = t.yearName;
             if (year.equals(t.yearName)) out.add(t);
         }
@@ -255,7 +267,14 @@ public class SlotService {
         }
         StringBuilder sb = new StringBuilder("📅 ").append(label).append(": ");
         if (r.placed() == 0) {
-            sb.append("все уроки уже отмечены, расставлять нечего.");
+            if (r.fromFile()) {
+                sb.append("даты взяты из файла КТП и не меняются.");
+            } else if (r.unplaced() > 0) {
+                sb.append("свободных уроков до конца года не нашлось, без даты осталось ").append(r.unplaced())
+                        .append(" уроков. Проверьте /schedule и /calendar.");
+            } else {
+                sb.append("все уроки уже проведены или подготовлены, расставлять нечего.");
+            }
             return sb.toString();
         }
         sb.append(r.placed()).append(" уроков по датам, с ").append(r.first().format(SHORT)).append(" до ")
