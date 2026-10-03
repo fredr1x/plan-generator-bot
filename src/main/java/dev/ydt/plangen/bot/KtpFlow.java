@@ -4,12 +4,14 @@ import static dev.ydt.plangen.bot.Kb.btn;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.ydt.plangen.domain.Book;
 import dev.ydt.plangen.domain.ConvState;
 import dev.ydt.plangen.domain.Ktp;
 import dev.ydt.plangen.domain.KtpClass;
 import dev.ydt.plangen.domain.KtpLesson;
 import dev.ydt.plangen.domain.KtpSlot;
 import dev.ydt.plangen.domain.KtpTerm;
+import dev.ydt.plangen.domain.ScheduleEntry;
 import dev.ydt.plangen.domain.SchoolClass;
 import dev.ydt.plangen.domain.Teacher;
 import dev.ydt.plangen.ktp.KtpAiParser;
@@ -71,6 +73,10 @@ public class KtpFlow {
         public String fileName;
         public Parsed parsed;
         public Integer grade;
+        /** Grades 10-11: natural_math or social_humanities. */
+        public String track;
+        /** The teacher has said which grade (and track) the KTP is for. */
+        public boolean gradeAsked;
         public List<Long> classIds = new ArrayList<>();
         /** The raw table: kept so that the columns can be asked and the plain parser can be tried instead. */
         public RawDoc raw;
@@ -115,19 +121,95 @@ public class KtpFlow {
         StringBuilder sb = new StringBuilder("📘 Ваши КТП\n");
         for (Ktp k : mine) {
             long lessons = KtpLesson.count("ktpId = ?1", k.id);
-            sb.append("\n• ").append(k.grade == null ? "?" : k.grade).append(" класс");
+            sb.append("\n• ").append(k.gradeLabel());
             if (k.schoolYear != null) sb.append(", ").append(k.schoolYear);
             sb.append(": ").append(lessons).append(" уроков, ").append(k.totalHours).append(" ч.");
-            String classes = KtpClass.ofKtp(k.id).stream()
-                    .map(c -> SchoolClass.<SchoolClass>findById(c.classId))
-                    .filter(c -> c != null).map(SchoolClass::label).collect(Collectors.joining(", "));
-            sb.append(classes.isEmpty() ? "\n  классы не привязаны" : "\n  классы: " + classes);
-            rows.add(btn("📋 Юниты и темы · " + k.grade + " класс", "ktp:units:" + k.id));
-            rows.add(btn("📅 Даты уроков", "ktp:dates:" + k.id));
+            List<KtpTerm> terms = KtpTerm.ofKtp(k.id);
+            if (!terms.isEmpty()) {
+                sb.append("\n  четверти: ").append(terms.stream().map(t -> t.hours == null ? "?" : String.valueOf(t.hours))
+                        .collect(Collectors.joining(" / "))).append(" ч.");
+            }
+            List<KtpClass> links = KtpClass.ofKtp(k.id);
+            if (links.isEmpty()) sb.append("\n  классы не привязаны");
+            for (KtpClass link : links) {
+                SchoolClass c = SchoolClass.findById(link.classId);
+                if (c != null) sb.append(classLine(k, c));
+            }
+            rows.add(btn("📋 Юниты и темы · " + k.gradeLabel(), "ktp:units:" + k.id));
+            rows.add(btn("🔗 Классы", "ktp:lk:" + k.id), btn("📅 Даты уроков", "ktp:dates:" + k.id));
             rows.add(btn("✏️ Исправить урок", "ktp:edit:" + k.id), btn("🗑 Удалить", "ktp:del:" + k.id));
         }
         rows.add(btn("➕ Загрузить КТП", "ktp:new"));
         bot.send(chat, sb.toString(), rows.build());
+    }
+
+    /** The classes that can follow this KTP (same grade, same track for 10-11) with a tick for the linked ones. */
+    private void showLinks(long uid, long chat, Long editMsg, Ktp k) {
+        List<SchoolClass> fitting = SchoolClass.forTeacher(uid).stream()
+                .filter(c -> k.grade != null && c.grade == k.grade
+                        && (k.track == null || c.track == null || c.track.equals(k.track)))
+                .toList();
+        if (fitting.isEmpty()) {
+            bot.send(chat, "Нет классов, которые подходят к КТП (" + k.gradeLabel() + "). Добавьте класс в /classes "
+                    + (k.track == null ? "" : "и укажите направление ") + "и вернитесь сюда.", null);
+            return;
+        }
+        java.util.Set<Long> mine = KtpClass.ofKtp(k.id).stream().map(l -> l.classId)
+                .collect(Collectors.toSet());
+        Kb.Rows rows = Kb.rows();
+        for (SchoolClass c : fitting) {
+            boolean other = !mine.contains(c.id) && KtpClass.count("classId = ?1 and ktpId <> ?2", c.id, k.id) > 0;
+            rows.add(btn((mine.contains(c.id) ? "✅ " : "▫️ ") + c.label() + (other ? " (сейчас по другому КТП)" : ""),
+                    "ktp:lt:" + k.id + ":" + c.id));
+        }
+        rows.add(btn("Готово →", "ktp:ld:" + k.id));
+        String text = "🔗 Классы КТП (" + k.gradeLabel() + "). Отметьте классы, которые идут по этому плану: один КТП "
+                + "могут вести несколько классов (параллели), а класс идёт только по одному КТП.";
+        if (editMsg != null) bot.edit(chat, editMsg, text, rows.build());
+        else bot.send(chat, text, rows.build());
+    }
+
+    /** Links the class to the KTP, or unlinks it. A class that followed another KTP moves to this one. */
+    private void toggleLink(Ktp k, SchoolClass c) {
+        KtpClass link = KtpClass.find("ktpId = ?1 and classId = ?2", k.id, c.id).firstResult();
+        if (link != null) {
+            link.delete();
+            KtpSlot.delete("ktpId = ?1 and classId = ?2 and status = 'planned'", k.id, c.id);
+            LOG.infof("[ktp] class %s unlinked from KTP #%d", c.label(), k.id);
+            return;
+        }
+        KtpClass.delete("classId = ?1 and ktpId <> ?2", c.id, k.id);
+        KtpSlot.delete("classId = ?1 and ktpId <> ?2 and status = 'planned'", c.id, k.id);
+        KtpClass.getEntityManager().flush();
+        KtpClass add = new KtpClass();
+        add.ktpId = k.id;
+        add.classId = c.id;
+        add.persist();
+        LOG.infof("[ktp] class %s linked to KTP #%d", c.label(), k.id);
+    }
+
+    /** One line per class of a KTP: the timetable load and where the dates stand. */
+    private String classLine(Ktp k, SchoolClass c) {
+        long perWeek = ScheduleEntry.count("classId", c.id);
+        StringBuilder sb = new StringBuilder("\n  ▸ ").append(c.label()).append(": ");
+        sb.append(perWeek == 0 ? "нет уроков в расписании" : perWeek + " ур. в неделю в расписании");
+        List<KtpSlot> live = KtpSlot.list("ktpId = ?1 and classId = ?2 and status in ('planned', 'prepared') "
+                + "order by slotDate, lessonNo", k.id, c.id);
+        if (live.isEmpty()) {
+            sb.append(perWeek == 0 ? "" : ", даты не расставлены (кнопка «Даты уроков»)");
+            return sb.toString();
+        }
+        KtpSlot next = live.stream().filter(x -> !x.slotDate.isBefore(time.today())).findFirst().orElse(null);
+        long prepared = live.stream().filter(x -> KtpSlot.PREPARED.equals(x.status)).count();
+        sb.append("\n    даты: ").append(live.get(0).slotDate.format(Dates.SHORT)).append("–")
+                .append(live.get(live.size() - 1).slotDate.format(Dates.SHORT)).append(", осталось уроков: ")
+                .append(live.size()).append(", планов готово: ").append(prepared);
+        if (next != null) {
+            KtpLesson l = KtpLesson.findById(next.lessonId);
+            sb.append("\n    ближайший: ").append(next.slotDate.format(Dates.SHORT)).append(" · ")
+                    .append(l == null ? "?" : "№" + l.seq + " " + Kb.trunc(l.topic, 40));
+        }
+        return sb.toString();
     }
 
     private void askFile(long uid, long chat) {
@@ -248,6 +330,8 @@ public class KtpFlow {
                     return;
                 }
                 d.grade = Integer.valueOf(t);
+                d.gradeAsked = true;
+                d.track = null;
                 review(uid, chat, d);
             }
             case KTP_EDIT -> onEdit(uid, chat, st, text);
@@ -330,6 +414,21 @@ public class KtpFlow {
 
     // ------------------------------------------------------------------ review and save
 
+    /** Which grade is the KTP for: the grades of the teacher's classes, the one found in the file is marked. */
+    private void askGrade(long uid, long chat, Import d) {
+        Integer guess = d.parsed.grade != null ? d.parsed.grade : KtpParser.gradeFromCodes(d.parsed);
+        java.util.TreeSet<Integer> grades = new java.util.TreeSet<>();
+        SchoolClass.<SchoolClass>forTeacher(uid).forEach(c -> grades.add(c.grade));
+        if (guess != null) grades.add(guess);
+        Kb.Rows rows = Kb.rows();
+        for (Integer g : grades) {
+            rows.add(btn(g + " класс" + (g.equals(guess) ? " (так в файле)" : ""), "ktp:g:" + g));
+        }
+        rows.add(btn("Другой класс", "ktp:g:x"));
+        save(uid, KTP_GRADE, d);
+        bot.send(chat, "Для какого класса этот КТП?", rows.build());
+    }
+
     private void review(long uid, long chat, Import d) {
         Parsed p = d.parsed;
         if (p.lessons.isEmpty()) {
@@ -338,16 +437,21 @@ public class KtpFlow {
                     + "\nПришлите другой файл: /ktp", null);
             return;
         }
-        if (d.grade == null) d.grade = p.grade != null ? p.grade : KtpParser.gradeFromCodes(p);
-        if (d.grade == null) {
+        if (!d.gradeAsked) {
+            askGrade(uid, chat, d);
+            return;
+        }
+        if (d.grade >= 10 && d.track == null) {
             save(uid, KTP_GRADE, d);
-            bot.send(chat, "Для какого класса этот КТП? Напишите число (1–11).", null);
+            bot.send(chat, "Какое направление у " + d.grade + " класса?", Kb.rows()
+                    .add(btn("Естественно-математическое", "ktp:t:nm"))
+                    .add(btn("Общественно-гуманитарное", "ktp:t:sh")).build());
             return;
         }
         List<UnitInfo> units = KtpService.units(p.lessons.stream().map(l -> l.unit).toList());
         StringBuilder sb = new StringBuilder("📘 КТП");
         if (p.title != null) sb.append(": ").append(Kb.trunc(p.title, 120));
-        sb.append("\nКласс: ").append(d.grade);
+        sb.append("\nКласс: ").append(d.grade).append(d.track == null ? "" : ", " + Book.trackLabel(d.track));
         if (p.schoolYear != null) sb.append(" · учебный год ").append(p.schoolYear);
         sb.append("\nУроков: ").append(p.lessons.size()).append(" (часов ").append(p.totalHours()).append(")")
                 .append(" · юнитов: ").append(units.size());
@@ -363,8 +467,12 @@ public class KtpFlow {
             sb.append("\n\n⚠️ Замечания:");
             p.warnings.stream().limit(8).forEach(w -> sb.append("\n• ").append(w));
         }
-        long existing = Ktp.count("teacherId = ?1 and grade = ?2", uid, d.grade);
-        if (existing > 0) sb.append("\n\nЭто заменит ваш сохранённый КТП ").append(d.grade).append(" класса.");
+        long existing = d.track == null ? Ktp.count("teacherId = ?1 and grade = ?2 and track is null", uid, d.grade)
+                : Ktp.count("teacherId = ?1 and grade = ?2 and track = ?3", uid, d.grade, d.track);
+        if (existing > 0) {
+            sb.append("\n\nЭто заменит ваш сохранённый КТП ").append(d.grade).append(" класса")
+                    .append(d.track == null ? "" : " (" + Book.trackLabel(d.track) + ")").append(".");
+        }
         sb.append("\n\nРазобрано: ").append(d.viaAi ? "с помощью ИИ, тексты сверены с файлом" : "без ИИ (кодом)");
         save(uid, KTP_REVIEW, d);
         Kb.Rows buttons = Kb.rows()
@@ -377,7 +485,10 @@ public class KtpFlow {
     }
 
     private void askClasses(long uid, long chat, Long editMsg, Import d) {
-        List<SchoolClass> fitting = SchoolClass.forTeacher(uid).stream().filter(c -> c.grade == d.grade).toList();
+        // classes of this grade; for grades 10-11 only the same track (a class without a track is shown too)
+        List<SchoolClass> fitting = SchoolClass.forTeacher(uid).stream()
+                .filter(c -> c.grade == d.grade && (d.track == null || c.track == null || c.track.equals(d.track)))
+                .toList();
         if (fitting.isEmpty()) {
             saveKtp(uid, chat, d);
             return;
@@ -395,7 +506,7 @@ public class KtpFlow {
 
     private void saveKtp(long uid, long chat, Import d) {
         Teacher t = Teacher.findById(uid);
-        Ktp k = ktps.save(uid, t == null ? null : t.subject, d.parsed, d.grade, d.fileName, d.classIds);
+        Ktp k = ktps.save(uid, t == null ? null : t.subject, d.parsed, d.grade, d.track, d.fileName, d.classIds);
         ConvState.clear(uid);
         LOG.infof("[ktp] user=%d saved KTP #%d: grade %d, %d lessons, %d classes", uid, k.id, d.grade,
                 d.parsed.lessons.size(), d.classIds.size());
@@ -405,6 +516,8 @@ public class KtpFlow {
                 Kb.row(btn("📋 Юниты и темы", "ktp:units:" + k.id)));
         if (!d.classIds.isEmpty()) {
             askStart(uid, chat, k);
+        } else {
+            start(uid, chat);
         }
     }
 
@@ -429,13 +542,35 @@ public class KtpFlow {
         StringBuilder sb = new StringBuilder();
         for (KtpClass link : KtpClass.ofKtp(k.id)) {
             SchoolClass c = SchoolClass.findById(link.classId);
-            if (c == null) continue;
+            // classes that already have dates keep them (the button "Даты уроков" recalculates those)
+            if (c == null || KtpSlot.count("ktpId = ?1 and classId = ?2", k.id, c.id) > 0) continue;
             if (sb.length() > 0) sb.append("\n\n");
             sb.append(SlotService.describe(new SlotService.Built(k, c, slots.build(k, c, startSeq))));
         }
         if (sb.length() == 0) sb.append("К КТП не привязан ни один класс: добавьте их в /classes и загрузите КТП "
                 + "снова.");
         bot.send(chat, sb + "\n\nПосмотреть: /week, предложение на завтра: /tomorrow.", null);
+        start(uid, chat); // the summary of all KTPs: hours, classes, dates
+    }
+
+    /**
+     * After the timetable was saved: the KTP classes that still have no dates get an offer to place them
+     * (they could not be placed before because there were no lessons in the timetable).
+     */
+    void offerDates(long uid, long chat) {
+        for (Ktp k : Ktp.forTeacher(uid)) {
+            boolean missing = false;
+            for (KtpClass link : KtpClass.ofKtp(k.id)) {
+                if (KtpSlot.count("ktpId = ?1 and classId = ?2", k.id, link.classId) == 0
+                        && ScheduleEntry.count("classId", link.classId) > 0) {
+                    missing = true;
+                }
+            }
+            if (missing) {
+                bot.send(chat, "У КТП (" + k.gradeLabel() + ") ещё нет дат уроков, а расписание теперь есть. "
+                        + "Расставить даты?", Kb.row(btn("📅 Расставить даты", "ktp:dates:" + k.id)));
+            }
+        }
     }
 
     // ------------------------------------------------------------------ callbacks
@@ -449,6 +584,56 @@ public class KtpFlow {
             case "list" -> {
                 bot.answer(cbId, null);
                 start(uid, chat);
+            }
+            case "g" -> {
+                bot.answer(cbId, null);
+                Import d = read(ConvState.get(uid));
+                if (d == null || d.parsed == null) {
+                    bot.send(chat, "Сессия устарела, начните заново: /ktp", null);
+                    return;
+                }
+                if ("x".equals(p[2])) {
+                    save(uid, KTP_GRADE, d);
+                    bot.send(chat, "Для какого класса этот КТП? Напишите число (1–11).", null);
+                    return;
+                }
+                d.grade = Integer.valueOf(p[2]);
+                d.gradeAsked = true;
+                d.track = null;
+                review(uid, chat, d);
+            }
+            case "t" -> {
+                bot.answer(cbId, null);
+                Import d = read(ConvState.get(uid));
+                if (d == null || d.parsed == null || d.grade == null) {
+                    bot.send(chat, "Сессия устарела, начните заново: /ktp", null);
+                    return;
+                }
+                d.track = "nm".equals(p[2]) ? Book.NATURAL_MATH : Book.SOCIAL_HUMANITIES;
+                review(uid, chat, d);
+            }
+            case "lk" -> {
+                bot.answer(cbId, null);
+                Ktp k = ownedKtp(uid, Long.parseLong(p[2]));
+                if (k != null) showLinks(uid, chat, msgId, k);
+            }
+            case "lt" -> {
+                bot.answer(cbId, null);
+                Ktp k = ownedKtp(uid, Long.parseLong(p[2]));
+                SchoolClass c = SchoolClass.findById(Long.parseLong(p[3]));
+                if (k == null || c == null || c.teacherId != uid) return;
+                toggleLink(k, c);
+                showLinks(uid, chat, msgId, k);
+            }
+            case "ld" -> {
+                bot.answer(cbId, null);
+                Ktp k = ownedKtp(uid, Long.parseLong(p[2]));
+                if (k == null) return;
+                boolean needDates = KtpClass.ofKtp(k.id).stream().anyMatch(l ->
+                        KtpSlot.count("ktpId = ?1 and classId = ?2", k.id, l.classId) == 0
+                                && ScheduleEntry.count("classId", l.classId) > 0);
+                if (needDates) askStart(uid, chat, k);
+                else start(uid, chat);
             }
             case "dates" -> {
                 bot.answer(cbId, null);
@@ -572,7 +757,7 @@ public class KtpFlow {
                 bot.answer(cbId, null);
                 Ktp k = ownedKtp(uid, Long.parseLong(p[2]));
                 if (k == null) return;
-                bot.send(chat, "Удалить КТП " + k.grade + " класса вместе со всеми уроками?",
+                bot.send(chat, "Удалить КТП (" + k.gradeLabel() + ") вместе со всеми уроками?",
                         Kb.row(btn("Да, удалить", "ktp:delok:" + k.id), btn("Нет", "ktp:list")));
             }
             case "delok" -> {
@@ -629,7 +814,7 @@ public class KtpFlow {
                     "pl:ku:" + k.id + ":" + i));
         }
         rows.add(btn("Ввести вручную", "pl:kn"));
-        String text = "📘 Взять урок из КТП (" + k.grade + " класс)? Выберите юнит:";
+        String text = "📘 Взять урок из КТП (" + k.gradeLabel() + ")? Выберите юнит:";
         if (editMsg != null) bot.edit(chat, editMsg, text, rows.build());
         else bot.send(chat, text, rows.build());
     }

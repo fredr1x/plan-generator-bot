@@ -17,15 +17,18 @@ public class KtpService {
     public record UnitInfo(String title, int firstSeq, int lastSeq, int count) {}
 
     /** Saves a parsed KTP for the teacher; a plan of the same grade that was saved before is replaced. */
-    public Ktp save(long teacherId, String subject, KtpParser.Parsed p, int grade, String sourceName,
-                    List<Long> classIds) {
-        Ktp.delete("teacherId = ?1 and grade = ?2", teacherId, grade);
+    public Ktp save(long teacherId, String subject, KtpParser.Parsed p, int grade, String track,
+                    String sourceName, List<Long> classIds) {
+        // a plan of the same grade (and track) that was saved before is replaced
+        if (track == null) Ktp.delete("teacherId = ?1 and grade = ?2 and track is null", teacherId, grade);
+        else Ktp.delete("teacherId = ?1 and grade = ?2 and track = ?3", teacherId, grade, track);
         Ktp.getEntityManager().flush();
 
         Ktp k = new Ktp();
         k.teacherId = teacherId;
         k.subject = subject;
         k.grade = grade;
+        k.track = track;
         k.schoolYear = p.schoolYear;
         k.title = p.title;
         k.sourceName = sourceName;

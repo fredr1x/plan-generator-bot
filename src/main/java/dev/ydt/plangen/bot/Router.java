@@ -26,7 +26,8 @@ public class Router {
             /schedule — расписание
             /books — каталог книг: добавить по ссылке okulyk.kz, привязать к классам
             /ktp — КТП: загрузить файл Word, посмотреть юниты и темы, расставить даты
-            /week — уроки недели по КТП и готовность планов
+            /week — уроки этой недели по КТП и готовность планов
+            /next_week — уроки следующей недели
             /tomorrow — предложение планов на ближайший учебный день
             /calendar — четверти, каникулы, выходные (свои можно добавить)
             /settings — вечерняя подготовка: время и режим
@@ -160,7 +161,12 @@ public class Router {
                 }
                 case "week" -> {
                     ConvState.clear(uid);
-                    evening.week(uid, chat);
+                    evening.week(uid, chat, 0);
+                    return;
+                }
+                case "next_week", "nextweek" -> {
+                    ConvState.clear(uid);
+                    evening.week(uid, chat, 1);
                     return;
                 }
                 case "tomorrow" -> {

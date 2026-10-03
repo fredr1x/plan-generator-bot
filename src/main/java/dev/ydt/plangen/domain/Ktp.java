@@ -26,6 +26,9 @@ public class Ktp extends PanacheEntityBase {
 
     public Integer grade;
 
+    /** Grades 10-11 only: natural_math or social_humanities, otherwise null. */
+    public String track;
+
     @Column(name = "school_year")
     public String schoolYear;
 
@@ -39,6 +42,11 @@ public class Ktp extends PanacheEntityBase {
 
     @Column(name = "created_at")
     public Instant createdAt = Instant.now();
+
+    /** "10 класс, естественно-математическое" or "4 класс". */
+    public String gradeLabel() {
+        return (grade == null ? "?" : grade) + " класс" + (track == null ? "" : ", " + Book.trackLabel(track));
+    }
 
     public static List<Ktp> forTeacher(long teacherId) {
         return list("teacherId = ?1 order by grade, id", teacherId);

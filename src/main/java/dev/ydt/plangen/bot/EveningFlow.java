@@ -102,21 +102,24 @@ public class EveningFlow {
         bot.send(chat, "📅 " + cap(dayTitle(date)) + "\n\n" + summary(groups, date), rows.build());
     }
 
-    /** /week: lessons of this week (or the next one on a weekend) with topics and the state of the plans. */
-    void week(long uid, long chat) {
+    /**
+     * /week (offset 0) and /next_week (offset 1): the lessons of that calendar week, Monday to Sunday, with topics
+     * and the state of the plans.
+     */
+    void week(long uid, long chat, int offset) {
         LocalDate today = time.today();
-        LocalDate monday = today.getDayOfWeek().getValue() >= 6 ? today.plusDays(8 - today.getDayOfWeek().getValue())
-                : today.minusDays(today.getDayOfWeek().getValue() - 1);
+        LocalDate monday = today.minusDays(today.getDayOfWeek().getValue() - 1).plusWeeks(offset);
         LocalDate sunday = monday.plusDays(6);
+        String title = (offset == 0 ? "этой неделе" : "следующей неделе") + " (" + monday.format(Dates.SHORT) + "–"
+                + sunday.format(Dates.SHORT) + ")";
         List<KtpSlot> rows = KtpSlot.live(uid, monday, sunday);
-        if (rows.isEmpty()) { // nothing left this week (for example on Friday): show the next one
-            monday = monday.plusDays(7);
-            sunday = sunday.plusDays(7);
-            rows = KtpSlot.live(uid, monday, sunday);
-        }
+        Kb.Rows nav = Kb.rows();
+        nav.add(offset == 0 ? btn("➡️ Следующая неделя", "ev:wk:1") : btn("⬅️ Эта неделя", "ev:wk:0"));
         if (rows.isEmpty()) {
-            bot.send(chat, "На неделе " + monday.format(Dates.SHORT) + "–" + sunday.format(Dates.SHORT)
-                    + " уроков по КТП нет. Загрузите КТП (/ktp) и заполните /schedule.", null);
+            boolean any = !KtpSlot.live(uid, today, today.plusDays(400)).isEmpty();
+            bot.send(chat, "На " + title + " уроков по КТП нет."
+                    + (any ? " Это каникулы, выходные или в расписании на эти дни нет уроков."
+                    : " Загрузите КТП (/ktp), заполните /schedule и расставьте даты."), nav.build());
             return;
         }
         Map<Long, KtpLesson> lessons = new LinkedHashMap<>();
@@ -127,8 +130,7 @@ public class EveningFlow {
             classes.computeIfAbsent(s.classId, id -> SchoolClass.findById(id));
             byDay.computeIfAbsent(s.slotDate, d -> new ArrayList<>()).add(s);
         }
-        StringBuilder sb = new StringBuilder("🗓 Неделя ").append(monday.format(Dates.SHORT)).append("–")
-                .append(sunday.format(Dates.SHORT));
+        StringBuilder sb = new StringBuilder("🗓 Уроки на ").append(title);
         int ready = 0;
         int total = 0;
         for (var day : byDay.entrySet()) {
@@ -146,7 +148,8 @@ public class EveningFlow {
         }
         sb.append("\n\nПланов готово: ").append(ready).append(" из ").append(total).append(". ✅ значит план "
                 + "составлен.");
-        bot.send(chat, Kb.trunc(sb.toString(), 3900), Kb.row(btn("📅 Предложение на ближайший день", "ev:next")));
+        nav.add(btn("📅 Предложение на ближайший день", "ev:next"));
+        bot.send(chat, Kb.trunc(sb.toString(), 3900), nav.build());
     }
 
     // ------------------------------------------------------------------ callbacks
@@ -156,6 +159,7 @@ public class EveningFlow {
         switch (p[1]) {
             case "no" -> bot.edit(chat, msgId, "Хорошо, напомню завтра вечером. Планы можно составить в /plan.", null);
             case "next" -> tomorrow(uid, chat);
+            case "wk" -> week(uid, chat, "1".equals(p[2]) ? 1 : 0);
             case "go" -> {
                 LocalDate date = LocalDate.parse(p[2]);
                 int n = 0;

@@ -35,6 +35,9 @@ public class ScheduleFlow {
     @Inject
     SlotService slots;
 
+    @Inject
+    KtpFlow ktpFlow;
+
     public void show(long uid, long chat) {
         List<ScheduleEntry> entries = ScheduleEntry.forTeacher(uid);
         Map<Long, SchoolClass> classes = classMap(uid);
@@ -136,6 +139,7 @@ public class ScheduleFlow {
             bot.send(chat, "Расписание изменилось, пересчитал даты уроков по КТП.\n\n"
                     + SlotService.describeAll(built), null);
         }
+        ktpFlow.offerDates(uid, chat);
     }
 
     // ---------- helpers shared with the plan flow ----------
