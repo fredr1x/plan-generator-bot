@@ -124,7 +124,7 @@ public class CatalogFlow {
                     + "добавить через владельца бота.", null);
             return;
         }
-        Book existing = Book.find("sourceUrl", url).firstResult();
+        Book existing = byUrl(url);
         if (existing != null) {
             ConvState.clear(uid);
             bot.send(chat, "Эта книга уже в каталоге: " + existing.title + " (" + existing.statusLabel() + ").",
@@ -191,7 +191,47 @@ public class CatalogFlow {
         }
     }
 
+    /** The same book under another spelling of the link: host (.kz/.com, www), http, query, trailing slash, case. */
+    static String normalizeUrl(String url) {
+        if (url == null) return "";
+        String u = url.strip().toLowerCase(java.util.Locale.ROOT).replaceFirst("^https?://", "")
+                .replaceFirst("^www\\.", "");
+        u = u.replaceAll("[?#].*$", "").replaceAll("/+$", "");
+        return u.replaceFirst("^okulyk\\.(kz|com)", "okulyk");
+    }
+
+    private static Book byUrl(String url) {
+        String key = normalizeUrl(url);
+        for (Book b : Book.<Book>list("sourceUrl is not null")) {
+            if (key.equals(normalizeUrl(b.sourceUrl))) return b;
+        }
+        return null;
+    }
+
+    /** A book with the same title, grade and type that is already in the catalog (for example loaded from a PDF). */
+    private static Book byTitle(NewBook n) {
+        for (Book b : Book.<Book>list("lower(title) = ?1", n.title == null ? "" : n.title.strip().toLowerCase())) {
+            boolean sameGrade = java.util.Objects.equals(b.grade, n.grade);
+            boolean sameType = java.util.Objects.equals(b.bookType, n.type);
+            if (sameGrade && sameType) return b;
+        }
+        return null;
+    }
+
     private void create(long uid, long chat, NewBook n) {
+        Book same = byTitle(n);
+        if (same != null) {
+            // the pages of this book are scanned once: the existing entry is used, nothing new is created
+            if (same.sourceUrl == null) same.sourceUrl = n.sourceUrl;
+            if (same.pdfUrl == null) same.pdfUrl = n.pdfUrl;
+            if (same.coverUrl == null) same.coverUrl = n.coverUrl;
+            ConvState.clear(uid);
+            LOG.infof("[catalog] user=%d: \"%s\" is already in the catalog as book #%d (%s), not added again", uid,
+                    n.title, same.id, same.status);
+            bot.send(chat, "Такая книга уже есть в каталоге: " + same.title + " (" + same.statusLabel()
+                    + "). Страницы повторно не сканируются, привяжите её к своим классам.", classButtons(uid, same));
+            return;
+        }
         Book b = new Book();
         b.title = n.title;
         b.subject = n.subject;
