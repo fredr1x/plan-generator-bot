@@ -283,6 +283,9 @@ public class CatalogFlow {
 
     private void create(long uid, long chat, NewBook n) {
         Book same = byTitle(n);
+        if (same == null && n.pdfUrl != null && !n.pdfUrl.isBlank()) {
+            same = Book.<Book>find("pdfUrl", n.pdfUrl).firstResult(); // the same PDF file
+        }
         if (same != null) {
             // the pages of this book are scanned once: the existing entry is used, nothing new is created
             if (same.sourceUrl == null) same.sourceUrl = n.sourceUrl;

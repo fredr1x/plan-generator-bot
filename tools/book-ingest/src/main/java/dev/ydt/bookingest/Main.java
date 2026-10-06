@@ -122,6 +122,8 @@ public final class Main {
             Set<Integer> done;
             try (Connection c = connect(cfg)) {
                 bookId = upsertBook(c, title, subject, grade, total, kind);
+                // the same PDF under another title or entry is not read again: its pages are copied
+                reuseTwin(c, bookId, sha256(Path.of(opt.get("pdf"))), !force && !opt.containsKey("pages"));
                 done = force ? Set.of() : existingPages(c, bookId);
             }
             List<Integer> todo = new ArrayList<>();
@@ -274,6 +276,15 @@ public final class Main {
         try {
             file = download(row.pdfUrl, 300L * 1024 * 1024);
             System.out.printf("Downloaded %d KB from %s%n", Files.size(file) / 1024, row.pdfUrl);
+            String sha = sha256(file);
+            long twin;
+            try (Connection c = connect(cfg)) {
+                twin = sameLoadedBook(c, row.id, sha);
+            }
+            if (twin > 0) {
+                System.out.printf("This PDF is identical to the PDF of book #%d, which has pages already: they are "
+                        + "copied, the model is called only for pages that are still missing.%n", twin);
+            }
             try (PDDocument pdf = Loader.loadPDF(file.toFile())) {
                 int total = pdf.getNumberOfPages();
                 if (dry) {
@@ -282,6 +293,7 @@ public final class Main {
                 }
                 Set<Integer> done;
                 try (Connection c = connect(cfg)) {
+                    reuseTwin(c, row.id, sha, true);
                     done = existingPages(c, row.id);
                     setPages(c, row.id, total);
                 }
@@ -602,6 +614,73 @@ public final class Main {
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return rs.getLong(1);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ the same PDF is read once
+
+    private static String sha256(Path file) throws Exception {
+        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+        try (java.io.InputStream in = Files.newInputStream(file)) {
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
+        }
+        return java.util.HexFormat.of().formatHex(md.digest());
+    }
+
+    /** Another book that was read from the same PDF and has the most pages, or -1. */
+    private static long sameLoadedBook(Connection c, long bookId, String sha) throws Exception {
+        try {
+            return findTwin(c, bookId, sha);
+        } catch (java.sql.SQLException e) {
+            // the column comes with migration V12 of the bot: until it is deployed there is no duplicate check
+            System.out.println("Duplicate check skipped (" + clip(e.getMessage(), 120) + "). Deploy the bot first "
+                    + "(migration V12) to enable it.");
+            return -1;
+        }
+    }
+
+    private static long findTwin(Connection c, long bookId, String sha) throws Exception {
+        String sql = "SELECT b.id FROM plangen.books b WHERE b.pdf_sha256 = ? AND b.id <> ? "
+                + "AND EXISTS (SELECT 1 FROM plangen.book_pages p WHERE p.book_id = b.id) "
+                + "ORDER BY (SELECT count(*) FROM plangen.book_pages p WHERE p.book_id = b.id) DESC LIMIT 1";
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, sha);
+            ps.setLong(2, bookId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(1) : -1;
+            }
+        }
+    }
+
+    /**
+     * Remembers the hash of the PDF of this book and, when asked, copies the pages of another book that was read
+     * from the very same PDF (no model call, no cost). Pages that already exist are kept.
+     */
+    private static void reuseTwin(Connection c, long bookId, String sha, boolean copy) throws Exception {
+        long twin = copy ? sameLoadedBook(c, bookId, sha) : -1;
+        try (PreparedStatement ps = c.prepareStatement("UPDATE plangen.books SET pdf_sha256 = ? WHERE id = ?")) {
+            ps.setString(1, sha);
+            ps.setLong(2, bookId);
+            ps.executeUpdate();
+        } catch (java.sql.SQLException e) {
+            System.out.println("The hash of the PDF was not saved (" + clip(e.getMessage(), 120) + "). Deploy the bot "
+                    + "first (migration V12).");
+            return;
+        }
+        if (twin > 0) {
+            String sql = "INSERT INTO plangen.book_pages (book_id, pdf_page, printed_page, unit, heading, kind, "
+                    + "keywords, summary, content_json, search_text, tokens_in, tokens_out) "
+                    + "SELECT ?, pdf_page, printed_page, unit, heading, kind, keywords, summary, content_json, "
+                    + "search_text, 0, 0 FROM plangen.book_pages WHERE book_id = ? "
+                    + "ON CONFLICT (book_id, pdf_page) DO NOTHING";
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setLong(1, bookId);
+                ps.setLong(2, twin);
+                int n = ps.executeUpdate();
+                System.out.printf("Same PDF as book #%d: copied %d pages, no model call.%n", twin, n);
             }
         }
     }
