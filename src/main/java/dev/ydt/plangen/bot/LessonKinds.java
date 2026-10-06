@@ -27,6 +27,15 @@ final class LessonKinds {
     static String withKindNote(String notes, Long ktpLessonId) {
         if (ktpLessonId == null) return notes;
         KtpLesson l = KtpLesson.findById(ktpLessonId);
+        if (l != null && l.parts > 1) {
+            String partNote = "This is lesson " + l.part + " of " + l.parts + " on the same KTP topic (the KTP gives the "
+                    + "topic " + l.parts + " hours). " + (l.part == 1 ? "Introduce the topic and start the practice; "
+                    + "the next lesson will continue it." : "Continue from the previous lesson(s) on this topic: do "
+                    + "not repeat the introduction, give new practice, and " + (l.part == l.parts
+                    ? "finish with consolidation and a short check of the whole topic." : "leave the final "
+                    + "consolidation to the last lesson of the topic."));
+            notes = notes == null || notes.isBlank() ? partNote : notes + "\n" + partNote;
+        }
         String extra = l == null ? null : switch (l.kind == null ? "" : l.kind) {
             case "checkpoint" -> CHECKPOINT;
             case "interim" -> INTERIM;

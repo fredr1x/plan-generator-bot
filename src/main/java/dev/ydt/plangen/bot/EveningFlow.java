@@ -143,7 +143,7 @@ public class EveningFlow {
                 total++;
                 if (ok) ready++;
                 sb.append("\n").append(s.lessonNo).append(" ур. · ").append(c == null ? "?" : c.label()).append(" — ")
-                        .append(l == null ? "?" : Kb.trunc(l.topic, 45)).append(ok ? " ✅" : "");
+                        .append(l == null ? "?" : Kb.trunc(l.title(), 45)).append(ok ? " ✅" : "");
             }
         }
         sb.append("\n\nПланов готово: ").append(ready).append(" из ").append(total).append(". ✅ значит план "
@@ -179,7 +179,7 @@ public class EveningFlow {
                 }
                 Kb.Rows rows = Kb.rows();
                 for (Group g : groups) {
-                    rows.add(btn(Kb.trunc(g.numbers() + " ур. · " + labels(g) + " · " + g.lesson().topic, 58),
+                    rows.add(btn(Kb.trunc(g.numbers() + " ур. · " + labels(g) + " · " + g.lesson().title(), 58),
                             "ev:" + (edit ? "e:" : "s:") + date + ":" + g.lesson().id));
                 }
                 bot.send(chat, edit ? "Какой урок изменить?" : "Какой урок не состоялся?", rows.build());
@@ -264,7 +264,7 @@ public class EveningFlow {
             if (g.lesson().unitTitle != null && !g.lesson().unitTitle.isBlank()) {
                 sb.append(Kb.trunc(g.lesson().unitTitle, 40)).append(" · ");
             }
-            sb.append(Kb.trunc(g.lesson().topic, 70));
+            sb.append(Kb.trunc(g.lesson().title(), 70));
             if (!"lesson".equals(g.lesson().kind)) sb.append(" [").append(g.lesson().kind).append(']');
             if (g.prepared()) sb.append("\n    ✅ план уже готов");
             List<Draft.BookRef> refs = books.autoPick(g.lesson(), g.classes(), date);

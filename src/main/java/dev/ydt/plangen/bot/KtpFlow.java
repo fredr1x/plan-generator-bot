@@ -209,7 +209,7 @@ public class KtpFlow {
         if (next != null) {
             KtpLesson l = KtpLesson.findById(next.lessonId);
             sb.append("\n    ближайший: ").append(next.slotDate.format(Dates.SHORT)).append(" · ")
-                    .append(l == null ? "?" : "№" + l.seq + " " + Kb.trunc(l.topic, 40));
+                    .append(l == null ? "?" : "№" + l.seq + " " + Kb.trunc(l.title(), 40));
         }
         return sb.toString();
     }
@@ -402,12 +402,20 @@ public class KtpFlow {
                     null);
             return;
         }
+        // the hours of one topic are one thing for the teacher: the change goes to all of them
+        List<KtpLesson> group = l.parts > 1
+                ? KtpLesson.list("ktpId = ?1 and seq >= ?2 and seq <= ?3", ktpId, l.seq - (l.part - 1),
+                        l.seq + (l.parts - l.part))
+                : List.of(l);
         if (m.group(2) != null) {
             String[] norm = KtpParser.normalizeObjectives(m.group(3));
-            l.objectives = norm[0];
-            l.codes = norm[1];
+            for (KtpLesson x : group) {
+                x.objectives = norm[0];
+                x.codes = norm[1];
+            }
         } else {
-            l.topic = m.group(3).strip();
+            String topic = m.group(3).strip();
+            for (KtpLesson x : group) x.topic = topic;
         }
         ConvState.clear(uid);
         bot.send(chat, "✅ Урок " + l.seq + " обновлён:\n" + l.topic + (l.objectives == null || l.objectives.isBlank()
@@ -455,8 +463,13 @@ public class KtpFlow {
         if (p.title != null) sb.append(": ").append(Kb.trunc(p.title, 120));
         sb.append("\nКласс: ").append(d.grade).append(d.track == null ? "" : ", " + Book.trackLabel(d.track));
         if (p.schoolYear != null) sb.append(" · учебный год ").append(p.schoolYear);
-        sb.append("\nУроков: ").append(p.lessons.size()).append(" (часов ").append(p.totalHours()).append(")")
+        int perHour = p.lessons.stream().mapToInt(l -> Math.max(1, l.hours)).sum();
+        sb.append("\nУроков в файле: ").append(p.lessons.size()).append(" (часов ").append(p.totalHours()).append(")")
                 .append(" · юнитов: ").append(units.size());
+        if (perHour != p.lessons.size()) {
+            sb.append("\nУроки на несколько часов будут разбиты на отдельные уроки по 1 часу: после сохранения ")
+                    .append(perHour).append(" уроков.");
+        }
         if (!p.terms.isEmpty()) {
             sb.append("\nЧетверти: ").append(p.terms.stream()
                     .map(t -> t.no + " — " + (t.hours == null ? "?" : t.hours + " ч"))
@@ -512,8 +525,8 @@ public class KtpFlow {
         ConvState.clear(uid);
         LOG.infof("[ktp] user=%d saved KTP #%d: grade %d, %d lessons, %d classes", uid, k.id, d.grade,
                 d.parsed.lessons.size(), d.classIds.size());
-        bot.send(chat, "✅ КТП сохранён: " + d.parsed.lessons.size() + " уроков, " + d.parsed.totalHours()
-                + " часов, классов: " + d.classIds.size() + ".\n"
+        bot.send(chat, "✅ КТП сохранён: " + KtpLesson.count("ktpId", k.id) + " уроков по 1 часу, "
+                + d.parsed.totalHours() + " часов, классов: " + d.classIds.size() + ".\n"
                 + "Теперь в /plan можно взять урок прямо из КТП: выберите класс, и бот предложит юнит и тему.",
                 Kb.row(btn("📋 Юниты и темы", "ktp:units:" + k.id)));
         if (!d.classIds.isEmpty()) {
@@ -750,7 +763,7 @@ public class KtpFlow {
                 StringBuilder sb = new StringBuilder("📋 ").append(u.title()).append('\n');
                 for (KtpLesson l : lessons) {
                     if (l.seq < u.firstSeq() || l.seq > u.lastSeq()) continue;
-                    sb.append('\n').append(l.seq).append(". ").append(l.topic);
+                    sb.append('\n').append(l.seq).append(". ").append(l.title());
                     if (!"lesson".equals(l.kind)) sb.append(" [").append(l.kind).append(']');
                     if (l.codes != null && !l.codes.isBlank()) sb.append("\n    ").append(l.codes);
                 }
@@ -841,7 +854,7 @@ public class KtpFlow {
         Kb.Rows rows = Kb.rows();
         for (KtpLesson l : lessons) {
             if (l.seq < u.firstSeq() || l.seq > u.lastSeq()) continue;
-            rows.add(btn(Kb.trunc(l.seq + ". " + l.topic + ("lesson".equals(l.kind) ? "" : " [" + l.kind + "]"), 58),
+            rows.add(btn(Kb.trunc(l.seq + ". " + l.title() + ("lesson".equals(l.kind) ? "" : " [" + l.kind + "]"), 58),
                     "pl:kl:" + l.id));
         }
         rows.add(btn("← Юниты", "pl:kb:" + k.id), btn("Ввести вручную", "pl:kn"));

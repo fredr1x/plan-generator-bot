@@ -38,6 +38,16 @@ public class KtpLesson extends PanacheEntityBase {
 
     public int hours = 1;
 
+    /** A lesson of several hours in the file is stored as {@code parts} lessons of one hour; this is number {@code part}. */
+    public int part = 1;
+
+    public int parts = 1;
+
+    /** The topic with "(2/3)" for a lesson that is one hour of several, for lists and messages. */
+    public String title() {
+        return parts > 1 ? topic + " (" + part + "/" + parts + ")" : topic;
+    }
+
     public String kind = "lesson";
 
     @Column(name = "source_date")

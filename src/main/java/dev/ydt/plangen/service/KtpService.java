@@ -42,19 +42,27 @@ public class KtpService {
             term.hours = t.hours;
             term.persist();
         }
+        // a lesson of 2-3 hours becomes 2-3 lessons of one hour with the same text: the timetable has one slot
+        // per lesson, so every hour needs its own row (and its own date)
+        int seq = 0;
         for (KtpParser.Lesson l : p.lessons) {
-            KtpLesson e = new KtpLesson();
-            e.ktpId = k.id;
-            e.seq = l.seq;
-            e.termNo = l.term;
-            e.unitTitle = l.unit;
-            e.topic = l.topic;
-            e.objectives = l.objectives;
-            e.codes = l.codes;
-            e.hours = l.hours;
-            e.kind = l.kind;
-            e.sourceDate = l.date == null ? null : LocalDate.parse(l.date);
-            e.persist();
+            int parts = Math.min(6, Math.max(1, l.hours)); // a misread cell must not create dozens of lessons
+            for (int part = 1; part <= parts; part++) {
+                KtpLesson e = new KtpLesson();
+                e.ktpId = k.id;
+                e.seq = ++seq;
+                e.termNo = l.term;
+                e.unitTitle = l.unit;
+                e.topic = l.topic;
+                e.objectives = l.objectives;
+                e.codes = l.codes;
+                e.hours = 1;
+                e.part = part;
+                e.parts = parts;
+                e.kind = l.kind;
+                e.sourceDate = part == 1 && l.date != null ? LocalDate.parse(l.date) : null;
+                e.persist();
+            }
         }
         for (Long classId : classIds) {
             // a class follows one KTP: it leaves the other one (with the dates it had there)
