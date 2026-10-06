@@ -25,6 +25,10 @@ public class TeacherSettings extends PanacheEntityBase {
 
     public String mode = SUGGEST;
 
+    /** The date from which changes of the timetable take effect; null or in the past means the default. */
+    @Column(name = "schedule_from")
+    public java.time.LocalDate scheduleFrom;
+
     /** The stored settings or the defaults (not persisted until changed). */
     public static TeacherSettings of(long teacherId) {
         TeacherSettings s = findById(teacherId);

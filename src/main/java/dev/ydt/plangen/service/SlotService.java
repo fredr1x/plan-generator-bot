@@ -51,7 +51,8 @@ public class SlotService {
      */
     public Result build(Ktp k, SchoolClass c, int startSeq) {
         LocalDate today = time.today();
-        List<ScheduleEntry> entries = ScheduleEntry.list("classId", c.id);
+        // all versions of the class's timetable; the version that is in force on a day decides its lessons
+        List<ScheduleEntry> entries = ScheduleEntry.list("teacherId = ?1 and classId = ?2", c.teacherId, c.id);
         if (entries.isEmpty()) {
             // nothing is taught any more: the lessons that are still ahead lose their dates
             KtpSlot.delete("ktpId = ?1 and classId = ?2 and status = 'planned' and slotDate >= ?3", k.id, c.id, today);
@@ -90,11 +91,13 @@ public class SlotService {
 
         List<NonTeachingDay> off = NonTeachingDay.visible(c.teacherId, from).stream()
                 .filter(d -> d.appliesTo(c.grade)).toList();
-        TreeMap<Integer, List<Integer>> perDay = new TreeMap<>();
+        List<LocalDate> versions = ScheduleEntry.versionDates(c.teacherId);
+        java.util.Map<LocalDate, TreeMap<Integer, List<Integer>>> byVersion = new java.util.HashMap<>();
         for (ScheduleEntry e : entries) {
-            perDay.computeIfAbsent(e.weekday, w -> new ArrayList<>()).add(e.lessonNo);
+            byVersion.computeIfAbsent(e.validFrom, v -> new TreeMap<>())
+                    .computeIfAbsent(e.weekday, w -> new ArrayList<>()).add(e.lessonNo);
         }
-        perDay.values().forEach(l -> l.sort(null));
+        byVersion.values().forEach(m -> m.values().forEach(l -> l.sort(null)));
 
         List<TermReport> report = new ArrayList<>();
         int placed = 0;
@@ -131,7 +134,12 @@ public class SlotService {
             List<LocalDate> slotDay = new ArrayList<>();
             List<Integer> slotNo = new ArrayList<>();
             for (LocalDate d = t.startsOn.isBefore(from) ? from : t.startsOn; !d.isAfter(t.endsOn); d = d.plusDays(1)) {
-                List<Integer> nos = perDay.get(d.getDayOfWeek().getValue());
+                LocalDate version = null;
+                for (LocalDate v : versions) {
+                    if (!v.isAfter(d)) version = v;
+                }
+                TreeMap<Integer, List<Integer>> perDay = version == null ? null : byVersion.get(version);
+                List<Integer> nos = perDay == null ? null : perDay.get(d.getDayOfWeek().getValue());
                 if (nos == null || isOff(d, off)) continue;
                 for (int no : nos) {
                     if (!taken.contains(key(d, no))) {

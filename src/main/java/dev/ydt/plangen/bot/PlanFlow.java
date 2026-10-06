@@ -245,7 +245,7 @@ public class PlanFlow {
                     askClasses(uid, chat, null, d);
                 } else {
                     int wd = Dates.weekday(LocalDate.parse(d.date));
-                    d.classIds = ScheduleEntry.forDay(uid, wd).stream()
+                    d.classIds = ScheduleEntry.forDay(uid, wd, LocalDate.parse(d.date)).stream()
                             .filter(e -> e.lessonNo == lessonNo)
                             .map(e -> e.classId)
                             .distinct()
@@ -374,7 +374,7 @@ public class PlanFlow {
         int wd = Dates.weekday(date);
         Map<Long, SchoolClass> classes = ScheduleFlow.classMap(uid);
         Map<Integer, List<String>> lessons = ScheduleFlow
-                .grouped(ScheduleEntry.forDay(uid, wd), classes)
+                .grouped(ScheduleEntry.forDay(uid, wd, date), classes)
                 .getOrDefault(wd, Map.of());
         if (lessons.isEmpty()) {
             askClasses(uid, chat, null, d);

@@ -191,7 +191,7 @@ public class KtpFlow {
 
     /** One line per class of a KTP: the timetable load and where the dates stand. */
     private String classLine(Ktp k, SchoolClass c) {
-        long perWeek = ScheduleEntry.count("classId", c.id);
+        long perWeek = ScheduleEntry.at(c.teacherId, time.today()).stream().filter(e -> e.classId == c.id).count();
         StringBuilder sb = new StringBuilder("\n  ▸ ").append(c.label()).append(": ");
         sb.append(perWeek == 0 ? "нет уроков в расписании" : perWeek + " ур. в неделю в расписании");
         List<KtpSlot> live = KtpSlot.list("ktpId = ?1 and classId = ?2 and status in ('planned', 'prepared') "

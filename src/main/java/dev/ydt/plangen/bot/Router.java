@@ -224,7 +224,8 @@ public class Router {
             profile.onText(uid, chat, st.state, t);
         } else if (ClassesFlow.CLASSES_ADD.equals(st.state)) {
             classes.onText(uid, chat, t);
-        } else if (ScheduleFlow.SCHEDULE_ADD.equals(st.state) || ScheduleFlow.SCHEDULE_PLUS.equals(st.state)) {
+        } else if (ScheduleFlow.SCHEDULE_ADD.equals(st.state) || ScheduleFlow.SCHEDULE_PLUS.equals(st.state)
+                || ScheduleFlow.SCHEDULE_DATE.equals(st.state)) {
             schedule.onText(uid, chat, st, t);
         } else if (st.state.startsWith("PLAN_")) {
             plan.onText(uid, chat, st, t);

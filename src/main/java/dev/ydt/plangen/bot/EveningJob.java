@@ -104,7 +104,7 @@ public class EveningJob {
         // nothing to prepare: say once if tomorrow is a day off on which the timetable has lessons
         LocalDate tomorrow = today.plusDays(1);
         boolean inTerm = SchoolTerm.all().stream().anyMatch(t -> t.contains(tomorrow));
-        if (!inTerm || ScheduleEntry.forDay(uid, tomorrow.getDayOfWeek().getValue()).isEmpty()) return;
+        if (!inTerm || ScheduleEntry.forDay(uid, tomorrow.getDayOfWeek().getValue(), tomorrow).isEmpty()) return;
         NonTeachingDay off = NonTeachingDay.visible(uid, tomorrow).stream().filter(n -> n.covers(tomorrow))
                 .findFirst().orElse(null);
         if (off != null && claim(today, uid, "holiday")) {
