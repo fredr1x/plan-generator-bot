@@ -33,8 +33,8 @@ public class SlotService {
     private static final Logger LOG = Logger.getLogger(SlotService.class);
     private static final DateTimeFormatter SHORT = DateTimeFormatter.ofPattern("dd.MM");
 
-    /** Hours needed in a term, slots available, hours that did not fit. */
-    public record TermReport(int termNo, int need, int slots, int left, int carriedIn) {}
+    /** Hours needed in a term, slots available, hours that did not fit and the numbers of those lessons. */
+    public record TermReport(int termNo, int need, int slots, int left, List<Integer> leftSeqs) {}
 
     public record Result(List<TermReport> terms, int placed, int unplaced, int perWeek, LocalDate first,
                          LocalDate last, boolean noSchedule, boolean noCalendar, boolean fromFile) {}
@@ -97,34 +97,45 @@ public class SlotService {
         perDay.values().forEach(l -> l.sort(null));
 
         List<TermReport> report = new ArrayList<>();
-        List<KtpLesson> carry = new ArrayList<>();
-        int qi = 0;
-        int lastTerm = terms.get(0).termNo;
         int placed = 0;
+        int unplaced = 0;
         LocalDate first = null;
         LocalDate last = null;
+
+        // the term of a lesson is the term the KTP gives it (the previous lesson's term when the cell is empty),
+        // limited to the terms of the calendar year
+        int firstTerm = terms.get(0).termNo;
+        int lastTermNo = terms.get(terms.size() - 1).termNo;
+        boolean hasTerms = lessons.stream().anyMatch(l -> l.termNo != null);
+        java.util.Map<Long, Integer> termOf = new java.util.HashMap<>();
+        int current = firstTerm;
+        for (KtpLesson l : lessons) {
+            if (l.termNo != null) current = l.termNo;
+            termOf.put(l.id, Math.max(firstTerm, Math.min(lastTermNo, current)));
+        }
+        // without any term in the KTP there are no boundaries to respect: the lessons simply fill the year
+        List<KtpLesson> carry = new ArrayList<>();
+        int qi = 0;
+
         for (int ti = 0; ti < terms.size(); ti++) {
             SchoolTerm t = terms.get(ti);
-            boolean lastTermOfYear = ti == terms.size() - 1;
             List<KtpLesson> mine = new ArrayList<>(carry);
-            int carriedIn = carry.stream().mapToInt(l -> Math.max(1, l.hours)).sum();
             carry.clear();
-            while (qi < queue.size()) {
-                KtpLesson l = queue.get(qi);
-                int tn = l.termNo == null ? lastTerm : l.termNo;
-                if (tn > t.termNo && !lastTermOfYear) break;
-                mine.add(l);
-                lastTerm = Math.max(lastTerm, tn);
-                qi++;
+            if (hasTerms) {
+                for (KtpLesson l : queue) {
+                    if (termOf.get(l.id) == t.termNo) mine.add(l);
+                }
+            } else {
+                while (qi < queue.size()) mine.add(queue.get(qi++));
             }
-            List<LocalDate[]> slots = new ArrayList<>();
+            List<LocalDate> slotDay = new ArrayList<>();
             List<Integer> slotNo = new ArrayList<>();
             for (LocalDate d = t.startsOn.isBefore(from) ? from : t.startsOn; !d.isAfter(t.endsOn); d = d.plusDays(1)) {
                 List<Integer> nos = perDay.get(d.getDayOfWeek().getValue());
                 if (nos == null || isOff(d, off)) continue;
                 for (int no : nos) {
                     if (!taken.contains(key(d, no))) {
-                        slots.add(new LocalDate[] {d});
+                        slotDay.add(d);
                         slotNo.add(no);
                     }
                 }
@@ -132,17 +143,20 @@ public class SlotService {
             int need = mine.stream().mapToInt(l -> Math.max(1, l.hours)).sum();
             int si = 0;
             int left = 0;
+            List<Integer> leftSeqs = new ArrayList<>();
             for (KtpLesson l : mine) {
-                if (si >= slots.size()) {
-                    carry.add(l);
+                if (si >= slotDay.size()) {
                     left += Math.max(1, l.hours);
+                    leftSeqs.add(l.seq);
+                    if (!hasTerms) carry.add(l);
+                    else unplaced++;
                     continue;
                 }
                 KtpSlot s = new KtpSlot();
                 s.ktpId = k.id;
                 s.classId = c.id;
                 s.lessonId = l.id;
-                s.slotDate = slots.get(si)[0];
+                s.slotDate = slotDay.get(si);
                 s.lessonNo = slotNo.get(si);
                 s.persist();
                 if (first == null) first = s.slotDate;
@@ -150,9 +164,13 @@ public class SlotService {
                 placed++;
                 si += Math.max(1, l.hours);
             }
-            report.add(new TermReport(t.termNo, need, slots.size(), left, carriedIn));
+            // on a recalculation a term that is over is not reported again (the lessons it lost stay without date)
+            if (existing.isEmpty() || !t.endsOn.isBefore(today)) {
+                report.add(new TermReport(t.termNo, need, slotDay.size(), hasTerms ? left : 0,
+                        hasTerms ? leftSeqs : List.of()));
+            }
         }
-        int unplaced = carry.size() + (queue.size() - qi);
+        unplaced += carry.size();
         LOG.infof("[slots] KTP #%d class %s: %d lessons placed, %d without a slot", k.id, c.label(), placed, unplaced);
         return new Result(report, placed, unplaced, entries.size(), first, last, false, false, false);
     }
@@ -280,23 +298,39 @@ public class SlotService {
         sb.append(r.placed()).append(" уроков по датам, с ").append(r.first().format(SHORT)).append(" до ")
                 .append(r.last().format(SHORT)).append(r.fromFile() ? " (даты из файла КТП)" : "").append(".");
         for (TermReport t : r.terms()) {
-            int own = t.need() - t.carriedIn(); // hours the KTP itself puts into this term
-            if (t.left() > t.carriedIn()) {
-                sb.append("\n⚠️ ").append(t.termNo()).append(" четверть: по КТП ").append(own).append(" ч., слотов ")
-                        .append(t.slots()).append(t.carriedIn() > 0 ? ", да ещё " + t.carriedIn()
-                        + " ч. перешли из прошлой четверти" : "").append(". Не поместилось ").append(t.left())
-                        .append(" ч.");
-            } else if (own > 0 && t.slots() - t.need() > 0) {
+            if (t.left() > 0) {
+                sb.append("\n⚠️ ").append(t.termNo()).append(" четверть: по КТП ").append(t.need()).append(" ч., слотов ")
+                        .append(t.slots()).append(". Не поместилось ").append(t.left()).append(" ч. (уроки КТП № ")
+                        .append(ranges(t.leftSeqs())).append("): они остаются без даты и в следующую четверть не "
+                        + "переносятся.");
+            } else if (t.need() > 0 && t.slots() - t.need() > 0) {
                 sb.append("\nℹ️ ").append(t.termNo()).append(" четверть: резерв ").append(t.slots() - t.need())
                         .append(" (повторение).");
             }
         }
         if (r.terms().stream().anyMatch(t -> t.left() > 0)) {
-            sb.append("\nЧто можно сделать: добавить урок в другой день в /schedule, объединить два соседних урока "
-                    + "или оставить как есть: непоместившиеся уроки перейдут в следующую четверть.");
+            sb.append("\nЧто можно сделать: добавить урок в другой день в /schedule (бот пересчитает даты и уроки "
+                    + "встанут), объединить два соседних урока в КТП или оставить как есть.");
         }
         if (r.unplaced() > 0) {
-            sb.append("\n⚠️ Без даты осталось ").append(r.unplaced()).append(" уроков: не хватило слотов до конца года.");
+            sb.append("\nВсего без даты: ").append(r.unplaced()).append(" уроков.");
+        }
+        return sb.toString();
+    }
+
+    /** 14, 15, 16, 20 becomes "14–16, 20". */
+    static String ranges(List<Integer> seqs) {
+        StringBuilder sb = new StringBuilder();
+        int i = 0;
+        while (i < seqs.size()) {
+            int a = seqs.get(i);
+            int b = a;
+            while (i + 1 < seqs.size() && seqs.get(i + 1) == b + 1) {
+                b = seqs.get(++i);
+            }
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(a == b ? String.valueOf(a) : a + "–" + b);
+            i++;
         }
         return sb.toString();
     }

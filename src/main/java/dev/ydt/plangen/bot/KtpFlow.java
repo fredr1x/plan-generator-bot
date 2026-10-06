@@ -211,6 +211,12 @@ public class KtpFlow {
             sb.append("\n    ближайший: ").append(next.slotDate.format(Dates.SHORT)).append(" · ")
                     .append(l == null ? "?" : "№" + l.seq + " " + Kb.trunc(l.title(), 40));
         }
+        // lessons that did not fit into their term have no slot
+        long dated = KtpSlot.count("ktpId = ?1 and classId = ?2 and status <> 'skipped'", k.id, c.id);
+        long without = KtpLesson.count("ktpId", k.id) - dated;
+        if (without > 0) {
+            sb.append("\n    ⚠️ без даты (не поместились в четверть): ").append(without);
+        }
         return sb.toString();
     }
 
