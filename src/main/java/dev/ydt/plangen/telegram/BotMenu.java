@@ -30,6 +30,7 @@ public class BotMenu {
             new BotCommand("books", "Каталог книг"),
             new BotCommand("history", "Прошлые планы"),
             new BotCommand("profile", "Профиль"),
+            new BotCommand("instruction", "Инструкция: что делать по порядку"),
             new BotCommand("help", "Помощь"),
             new BotCommand("cancel", "Отменить текущий ввод"));
 

@@ -33,6 +33,7 @@ public class Router {
             /settings — вечерняя подготовка: время и режим
             /history — прошлые планы
             /profile — Ф.И.О., школа, предмет, язык, длительность урока
+            /instruction — подробная инструкция: что делать по порядку
             /cancel — отменить текущий ввод
 
             В /plan можно прислать данные одним сообщением:
@@ -65,6 +66,9 @@ public class Router {
 
     @Inject
     EveningFlow evening;
+
+    @Inject
+    InstructionFlow instruction;
 
     @Inject
     CalendarFlow calendar;
@@ -118,6 +122,10 @@ public class Router {
                 }
                 case "help" -> {
                     bot.send(chat, HELP, null);
+                    return;
+                }
+                case "instruction", "guide" -> {
+                    instruction.show(chat);
                     return;
                 }
                 case "cancel" -> {
@@ -246,6 +254,7 @@ public class Router {
                 case "cat" -> catalog.onCallback(uid, chat, msg, cb.id(), p);
                 case "ktp" -> ktp.onCallback(uid, chat, msg, cb.id(), p);
                 case "ev" -> evening.onCallback(uid, chat, msg, cb.id(), p);
+                case "ins" -> instruction.onCallback(chat, msg, cb.id(), p);
                 case "cal" -> calendar.onCallback(uid, chat, msg, cb.id(), p);
                 case "set" -> settings.onCallback(uid, chat, msg, cb.id(), p);
                 default -> bot.answer(cb.id(), null);
