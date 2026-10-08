@@ -188,9 +188,18 @@ public class SlotService {
         LocalDate first = null;
         LocalDate last = null;
         for (KtpLesson l : queue) {
+            // the date comes from the file; the lesson number comes from the timetable that is in force that day.
+            // Two lessons on one day (a lesson moved from a holiday) get the class's periods one after the other,
+            // and when there are no more the first period that the teacher does not teach that day.
             int wd = l.sourceDate.getDayOfWeek().getValue();
-            int no = entries.stream().filter(e -> e.weekday == wd).mapToInt(e -> e.lessonNo).min().orElse(1);
-            if (KtpSlot.count("classId = ?1 and slotDate = ?2 and lessonNo = ?3", c.id, l.sourceDate, no) > 0) continue;
+            List<ScheduleEntry> day = ScheduleEntry.forDay(c.teacherId, wd, l.sourceDate);
+            int no = day.stream().filter(e -> e.classId == c.id).map(e -> e.lessonNo).sorted()
+                    .filter(n -> !periodTaken(c.id, l.sourceDate, n)).findFirst().orElse(-1);
+            if (no < 0) {
+                Set<Integer> busy = day.stream().map(e -> e.lessonNo).collect(Collectors.toSet());
+                no = 1;
+                while (busy.contains(no) || periodTaken(c.id, l.sourceDate, no)) no++;
+            }
             KtpSlot s = new KtpSlot();
             s.ktpId = k.id;
             s.classId = c.id;
@@ -203,6 +212,10 @@ public class SlotService {
             if (last == null || l.sourceDate.isAfter(last)) last = l.sourceDate;
         }
         return new Result(List.of(), placed, queue.size() - placed, entries.size(), first, last, false, false, true);
+    }
+
+    private static boolean periodTaken(long classId, LocalDate date, int no) {
+        return KtpSlot.count("classId = ?1 and slotDate = ?2 and lessonNo = ?3", classId, date, no) > 0;
     }
 
     /** Terms of the school year that is going on (or the next one), without the terms that are over. */

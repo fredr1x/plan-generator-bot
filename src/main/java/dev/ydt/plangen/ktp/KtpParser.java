@@ -95,6 +95,76 @@ public final class KtpParser {
         return null;
     }
 
+    private static final Pattern DATEISH = Pattern.compile("^\\d{1,2}\\.\\d{1,2}(?:\\.\\d{2,4})?\\s*(?:\\(.*\\))?$");
+
+    /**
+     * Columns of a table that has no header row (some schools paste only the lessons): the number column holds
+     * different small integers, the objectives column holds objective codes, the hours column holds the same
+     * small number, the date column holds dd.MM, and the topic is the other text column. Null when the table does
+     * not look like that.
+     */
+    static Mapping detectByContent(List<List<String>> rows) {
+        List<List<String>> lessonRows = new ArrayList<>();
+        for (List<String> r : rows) {
+            if (r.size() >= 4 && r.stream().anyMatch(c -> CODE.matcher(c).find())) lessonRows.add(r);
+        }
+        if (lessonRows.size() < 3) return null;
+        // merged rows (unit and term headings) have fewer cells: the most common width is the lesson width
+        Map<Integer, Integer> widths = new LinkedHashMap<>();
+        for (List<String> r : lessonRows) widths.merge(r.size(), 1, Integer::sum);
+        int width = widths.entrySet().stream().max(Map.Entry.comparingByValue()).get().getKey();
+        List<List<String>> data = lessonRows.stream().filter(r -> r.size() == width).toList();
+        int n = data.size();
+        int number = -1;
+        int hours = -1;
+        int date = -1;
+        int objectives = -1;
+        int bestObjectives = 0;
+        int bestDistinct = 0;
+        for (int c = 0; c < width; c++) {
+            final int col = c;
+            long numeric = data.stream().filter(r -> r.get(col).strip().matches("\\d{1,3}")).count();
+            long dates = data.stream().filter(r -> DATEISH.matcher(r.get(col).strip()).matches()).count();
+            long codes = data.stream().filter(r -> CODE.matcher(r.get(col)).find()).count();
+            long distinct = data.stream().map(r -> r.get(col).strip()).distinct().count();
+            if (codes > bestObjectives && codes >= 0.8 * n) {
+                objectives = c;
+                bestObjectives = (int) codes;
+            } else if (dates >= 0.5 * n && date < 0) {
+                date = c;
+            } else if (numeric >= 0.6 * n) {
+                if (distinct >= 0.5 * n && distinct > bestDistinct) {
+                    number = c;
+                    bestDistinct = (int) distinct;
+                } else if (distinct <= 3 && hours < 0) {
+                    hours = c;
+                }
+            }
+        }
+        if (number < 0 || objectives < 0) return null;
+        int topic = -1;
+        double bestLen = 0;
+        for (int c = 0; c < width; c++) {
+            if (c == number || c == objectives || c == hours || c == date) continue;
+            final int col = c;
+            long filled = data.stream().filter(r -> !r.get(col).isBlank()).count();
+            double avg = data.stream().mapToInt(r -> r.get(col).length()).average().orElse(0);
+            if (filled >= 0.6 * n && avg > bestLen) {
+                topic = c;
+                bestLen = avg;
+            }
+        }
+        return topic < 0 ? null : new Mapping(number, -1, topic, objectives, hours, date);
+    }
+
+    /** The header row and its columns, or the columns found from the content of a table without a header. */
+    private static Object[] detect(List<List<String>> rows) {
+        Object[] found = detectHeader(rows);
+        if (found != null) return found;
+        Mapping m = detectByContent(rows);
+        return m == null ? null : new Object[] {-1, m};
+    }
+
     private static boolean isNumberHeader(String h) {
         return NUMBER.contains(h) || h.startsWith("№") || h.matches("(no|n)\\.?");
     }
@@ -109,6 +179,10 @@ public final class KtpParser {
     private static final Pattern CODE = Pattern.compile("(\\d{1,2})\\s*\\.\\s*(\\d{1,2})\\s*\\.\\s*(\\d{1,2})\\s*\\.\\s*(\\d{1,2})\\.?");
     private static final Pattern TERM = Pattern.compile(
             "(?i)^\\s*(\\d)\\s*(?:st|nd|rd|d|th|-?я|-?й)?\\s*(?:term|quarter|четверть|тоқсан)\\b[^\\d]*(\\d+)?");
+    private static final Pattern TERM_ROW = Pattern.compile(
+            "(?i)\\bterm\\s*[-–—]?\\s*(IV|III|II|I|\\d)\\b\\s*\\(?\\s*(\\d+)?\\s*(?:hours?|h)?\\s*\\)?");
+    // a unit heading starts with the word: "The natural world (Unit 6 p.68)" is not one (its unit is a cell)
+    private static final Pattern UNIT_ROW = Pattern.compile("(?i)^\\s*unit\\s*(\\d+)\\s*[:.\\-–]?\\s*(.*)$");
     private static final Pattern TOTAL = Pattern.compile("(?i)^\\s*(total|итого|всего|барлығы)\\b[^\\d]*(\\d+)?");
     private static final Pattern GRADE = Pattern.compile("(?i)(?:grade|класс|сынып)\\s*(\\d{1,2})|(\\d{1,2})\\s*[- ]?(?:класс|сынып|grade)");
     private static final Pattern YEAR = Pattern.compile("(20\\d\\d)\\s*[-–/]\\s*(20\\d\\d)");
@@ -118,7 +192,7 @@ public final class KtpParser {
         List<List<String>> rows = doc.rows();
         Mapping map = forced;
         int headerRow = -1;
-        Object[] found = detectHeader(rows);
+        Object[] found = detect(rows);
         if (found != null) {
             headerRow = (int) found[0];
             if (map == null) map = (Mapping) found[1];
@@ -160,6 +234,32 @@ public final class KtpParser {
             String topic = cell(cells, map.topic());
             String unit = cell(cells, map.unit());
             String objectives = cell(cells, map.objectives());
+
+            // a row without a lesson that names a unit and/or a term: "Unit 3 Holidays and Travel",
+            // "Term III (30 hours)Unit 5 Reading for pleasure", "Term IV 24 hours"
+            // (the heading may stand in the number column too, it is then not a number)
+            if ((number.isBlank() || !number.matches("\\d{1,3}")) && topic.isBlank()
+                    && !CODE.matcher(joined).find()) {
+                String rest = joined;
+                boolean heading = false;
+                Matcher tr = TERM_ROW.matcher(rest);
+                if (tr.find()) {
+                    currentTerm = romanOrInt(tr.group(1));
+                    Term t = new Term();
+                    t.no = currentTerm;
+                    t.hours = tr.group(2) == null ? null : Integer.valueOf(tr.group(2));
+                    out.terms.add(t);
+                    rest = (rest.substring(0, tr.start()) + " " + rest.substring(tr.end())).strip();
+                    heading = true;
+                }
+                Matcher ur = UNIT_ROW.matcher(rest);
+                if (ur.find()) {
+                    String title = unglue(ur.group(2));
+                    currentUnit = "Unit " + ur.group(1) + (title.isEmpty() ? "" : ": " + title);
+                    heading = true;
+                }
+                if (heading) continue;
+            }
             boolean numeric = number.matches("\\d{1,3}");
             if (!number.isBlank() && !numeric) continue; // the header again, or a note
             if (number.isBlank() && topic.isBlank()) {
@@ -174,20 +274,20 @@ public final class KtpParser {
                 out.warnings.add("В строке " + number + " нет темы, строка пропущена.");
                 continue;
             }
-            if (!unit.isBlank()) currentUnit = unit.replaceAll("(?i)^(unit\\s*\\d+)\\s*:\\s*", "$1: ");
+            if (!unit.isBlank()) currentUnit = unglue(unit).replaceAll("(?i)^(unit\\s*\\d+)\\s*:\\s*", "$1: ");
 
             Lesson l = new Lesson();
             l.seq = out.lessons.size() + 1;
             l.term = currentTerm;
             l.unit = currentUnit;
-            l.topic = topic;
+            l.topic = unglue(topic);
             String hoursText = cell(cells, map.hours());
             if (hoursText.matches("\\d{1,2}")) {
                 l.hours = Math.max(1, Integer.parseInt(hoursText));
             } else {
                 blankHours++;
             }
-            l.date = parseDate(cell(cells, map.date()));
+            l.date = parseDate(cell(cells, map.date()), out.schoolYear);
             l.kind = kindOf(topic);
             out.lessons.add(l);
             rawObjectives.add(objectives);
@@ -213,8 +313,31 @@ public final class KtpParser {
                 out.warnings.add("Урок " + l.seq + " «" + clip(l.topic, 40) + "»: нет целей обучения.");
             }
         }
+        assignLeadingTerm(out);
         validate(out, blankHours);
         return new Outcome(out, false, preview(rows));
+    }
+
+    /**
+     * A table that starts in the middle of the year has no row for the term it starts in ("Term III" comes
+     * first): the lessons before the first term row belong to the term before it, and their hours are its hours.
+     */
+    private static void assignLeadingTerm(Parsed out) {
+        if (out.terms.isEmpty()) return;
+        int first = out.terms.get(0).no;
+        if (first <= 1) return;
+        int hours = 0;
+        for (Lesson l : out.lessons) {
+            if (l.term != null) break;
+            l.term = first - 1;
+            hours += l.hours;
+        }
+        if (hours > 0) {
+            Term t = new Term();
+            t.no = first - 1;
+            t.hours = hours;
+            out.terms.add(0, t);
+        }
     }
 
     private static void validate(Parsed out, int blankHours) {
@@ -318,7 +441,7 @@ public final class KtpParser {
 
     /** Column of the lesson number in the header row, or -1 when it is unknown. */
     public static int numberColumn(List<List<String>> rows) {
-        Object[] found = detectHeader(rows);
+        Object[] found = detect(rows);
         return found == null ? -1 : ((Mapping) found[1]).number();
     }
 
@@ -341,12 +464,41 @@ public final class KtpParser {
 
     /** ISO date from a cell like 05.10.2026 or 2026-10-05, null otherwise. */
     public static String isoDate(String s) {
-        return parseDate(s);
+        return parseDate(s, null);
+    }
+
+    /** As above, and a day and month without a year (05.11) take the year from the school year "2026-2027". */
+    public static String isoDate(String s, String schoolYear) {
+        return parseDate(s, schoolYear);
+    }
+
+    private static int romanOrInt(String r) {
+        return switch (r.toUpperCase(Locale.ROOT)) {
+            case "I" -> 1;
+            case "II" -> 2;
+            case "III" -> 3;
+            case "IV" -> 4;
+            default -> Integer.parseInt(r);
+        };
+    }
+
+    /**
+     * Words typed together ("FocusPresent", "Unit 3Holidays", "guide.Summative") get a space at the joint: between
+     * a lower case and an upper case letter, a digit and an upper case letter, and after a full stop.
+     */
+    public static String unglue(String s) {
+        if (s == null) return "";
+        return s.replaceAll("(?<=[a-z])(?=[A-Z])", " ").replaceAll("(?<=\\d)(?=[A-Z])", " ")
+                .replaceAll("(?<=[a-z]\\.)(?=[A-Z])", " ").replaceAll("\\s+", " ").strip();
     }
 
     public static String kindOf(String topic) {
         String t = topic.toLowerCase(Locale.ROOT);
         if (t.contains("interim")) return "interim";
+        // a summative work "for the term N" is the term assessment (40 minutes), not the one of a unit
+        if (t.contains("summative") && (t.contains("term") || t.contains("четверт") || t.contains("тоқсан"))) {
+            return "interim";
+        }
         if (t.contains("checkpoint") || t.contains("check point") || t.contains("summative")
                 || t.contains("контрольн") || t.contains("суммативн")) return "checkpoint";
         if (t.contains("project") || t.contains("проект")) return "project";
@@ -354,9 +506,21 @@ public final class KtpParser {
         return "lesson";
     }
 
-    private static String parseDate(String s) {
+    private static String parseDate(String s, String schoolYear) {
         if (s == null || s.isBlank()) return null;
         try {
+            // 05.11 or 05.03(08.03): the first date counts (the one in brackets is the date the lesson was moved from)
+            Matcher dm = Pattern.compile("^\\s*(\\d{1,2})\\.(\\d{1,2})(?:\\.(\\d{4}))?\\s*(?:\\(.*\\))?\\s*$").matcher(s);
+            if (dm.matches()) {
+                int month = Integer.parseInt(dm.group(2));
+                Integer year = dm.group(3) == null ? null : Integer.valueOf(dm.group(3));
+                if (year == null) {
+                    Matcher y = schoolYear == null ? null : YEAR.matcher(schoolYear);
+                    if (y == null || !y.find()) return null;
+                    year = Integer.parseInt(month >= 8 ? y.group(1) : y.group(2));
+                }
+                return LocalDate.of(year, month, Integer.parseInt(dm.group(1))).toString();
+            }
             if (s.matches("\\d{4}-\\d{1,2}-\\d{1,2}")) return LocalDate.parse(s, DateTimeFormatter.ofPattern("uuuu-M-d")).toString();
             if (s.matches("\\d{1,2}\\.\\d{1,2}\\.\\d{4}")) return LocalDate.parse(s, DOTTED).toString();
         } catch (RuntimeException e) {

@@ -269,11 +269,11 @@ public class KtpAiParser {
             l.term = a.term();
             l.unit = a.unit() == null || a.unit().isBlank() ? null
                     : tidy(a.unit()).replaceAll("(?i)^(unit\\s*\\d+)\\s*:\\s*", "$1: ");
-            l.topic = tidy(a.topic());
+            l.topic = KtpParser.unglue(tidy(a.topic()));
             fillObjectives(l, a.objectives());
             if (a.hours() != null && a.hours() >= 1) l.hours = a.hours();
             else blankHours++;
-            l.date = KtpParser.isoDate(a.date());
+            l.date = KtpParser.isoDate(a.date(), p.schoolYear);
             l.kind = KtpParser.kindOf(l.topic);
 
             // never trust a text that the file does not contain
