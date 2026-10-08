@@ -180,9 +180,10 @@ public final class KtpParser {
     private static final Pattern TERM = Pattern.compile(
             "(?i)^\\s*(\\d)\\s*(?:st|nd|rd|d|th|-?я|-?й)?\\s*(?:term|quarter|четверть|тоқсан)\\b[^\\d]*(\\d+)?");
     private static final Pattern TERM_ROW = Pattern.compile(
-            "(?i)\\bterm\\s*[-–—]?\\s*(IV|III|II|I|\\d)\\b\\s*\\(?\\s*(\\d+)?\\s*(?:hours?|h)?\\s*\\)?");
-    // a unit heading starts with the word: "The natural world (Unit 6 p.68)" is not one (its unit is a cell)
-    private static final Pattern UNIT_ROW = Pattern.compile("(?i)^\\s*unit\\s*(\\d+)\\s*[:.\\-–]?\\s*(.*)$");
+            "(?i)(?:\\bterm\\s*[-–—]?\\s*(IV|III|II|I|\\d)\\b|\\b(IV|III|II|I|\\d)\\s*(?:st|nd|rd|th)?\\s*term\\b)"
+                    + "\\s*\\(?\\s*[-–—]?\\s*(\\d+)?\\s*(?:hours?|h)?\\s*\\)?");
+    // "Unit 6" anywhere in a heading, but not inside brackets: "The natural world (Unit 6 p.68)" is a unit cell
+    private static final Pattern UNIT_ANY = Pattern.compile("(?i)(?<![(\\w])(unit|module)\\s*(\\d+)");
     private static final Pattern TOTAL = Pattern.compile("(?i)^\\s*(total|итого|всего|барлығы)\\b[^\\d]*(\\d+)?");
     private static final Pattern GRADE = Pattern.compile("(?i)(?:grade|класс|сынып)\\s*(\\d{1,2})|(\\d{1,2})\\s*[- ]?(?:класс|сынып|grade)");
     private static final Pattern YEAR = Pattern.compile("(20\\d\\d)\\s*[-–/]\\s*(20\\d\\d)");
@@ -238,24 +239,26 @@ public final class KtpParser {
             // a row without a lesson that names a unit and/or a term: "Unit 3 Holidays and Travel",
             // "Term III (30 hours)Unit 5 Reading for pleasure", "Term IV 24 hours"
             // (the heading may stand in the number column too, it is then not a number)
-            if ((number.isBlank() || !number.matches("\\d{1,3}")) && topic.isBlank()
+            boolean headingInTopic = number.isBlank() && !topic.isBlank() && objectives.isBlank()
+                    && cell(cells, map.hours()).isBlank() && cell(cells, map.date()).isBlank()
+                    && (TERM_ROW.matcher(topic).find() || UNIT_ANY.matcher(topic).find());
+            if (((number.isBlank() || !number.matches("\\d{1,3}")) && topic.isBlank() || headingInTopic)
                     && !CODE.matcher(joined).find()) {
                 String rest = joined;
                 boolean heading = false;
                 Matcher tr = TERM_ROW.matcher(rest);
                 if (tr.find()) {
-                    currentTerm = romanOrInt(tr.group(1));
+                    currentTerm = romanOrInt(tr.group(1) != null ? tr.group(1) : tr.group(2));
                     Term t = new Term();
                     t.no = currentTerm;
-                    t.hours = tr.group(2) == null ? null : Integer.valueOf(tr.group(2));
+                    t.hours = tr.group(3) == null ? null : Integer.valueOf(tr.group(3));
                     out.terms.add(t);
                     rest = (rest.substring(0, tr.start()) + " " + rest.substring(tr.end())).strip();
                     heading = true;
                 }
-                Matcher ur = UNIT_ROW.matcher(rest);
-                if (ur.find()) {
-                    String title = unglue(ur.group(2));
-                    currentUnit = "Unit " + ur.group(1) + (title.isEmpty() ? "" : ": " + title);
+                String unitHeading = unitHeading(rest);
+                if (unitHeading != null) {
+                    currentUnit = unitHeading;
                     heading = true;
                 }
                 if (heading) continue;
@@ -470,6 +473,22 @@ public final class KtpParser {
     /** As above, and a day and month without a year (05.11) take the year from the school year "2026-2027". */
     public static String isoDate(String s, String schoolYear) {
         return parseDate(s, schoolYear);
+    }
+
+    /**
+     * "Unit 3 Holidays and Travel", "Tradition and language. Unit 6 p.p. 68 - 79 (10 hours)" and "Travel and tourism.
+     * Unit 8" all give "Unit N: Title"; null when the text names no unit. The title is the text before the word
+     * "Unit" when there is some, otherwise the text after the number.
+     */
+    static String unitHeading(String text) {
+        Matcher m = UNIT_ANY.matcher(text);
+        if (!m.find()) return null;
+        String before = text.substring(0, m.start()).replaceAll("[\\s.,;:–-]+$", "").strip();
+        String after = text.substring(m.end()).replaceAll("^[\\s.:–-]+", "").strip();
+        String title = before.isEmpty() ? after : before;
+        title = unglue(title.replaceAll("\\(\\s*\\d+\\s*hours?\\s*\\)\\s*$", "").replaceAll("[\\s)]+$", ""));
+        String word = m.group(1).substring(0, 1).toUpperCase(Locale.ROOT) + m.group(1).substring(1).toLowerCase(Locale.ROOT);
+        return word + " " + m.group(2) + (title.isEmpty() ? "" : ": " + title);
     }
 
     private static int romanOrInt(String r) {
