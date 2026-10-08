@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -58,30 +59,56 @@ public final class KtpReader {
         throw new IOException("Поддерживаются файлы Word (.docx, .doc) и PDF с текстом");
     }
 
+    /** A table holds lessons when some cell has an objective code (4.1.1.1, also written "4. 1. 1. 1"). */
+    private static final Pattern CODE_CELL = Pattern.compile("\\d\\s*\\.\\s*\\d\\s*\\.\\s*\\d\\s*\\.\\s*\\d");
+    /** A paragraph between two tables that names a term or a unit ("Term II 24 hours") is a heading row. */
+    private static final Pattern HEADING_WORDS = Pattern.compile("(?i)\\b(term|unit|module)\\b|четверт|тоқсан");
+
+    private static boolean hasCode(List<List<String>> rows) {
+        return rows.stream().anyMatch(r -> r.stream().anyMatch(c -> CODE_CELL.matcher(c).find()));
+    }
+
+    /**
+     * Many KTPs are split over several tables (a table per term, a heading paragraph in between). Every table with
+     * lessons is taken, in the order of the document, and a heading paragraph between two of them becomes a row.
+     * Only when no table has lessons the biggest one is used.
+     */
     private static RawDoc readDocx(byte[] data) throws IOException {
         try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(data))) {
             List<String> head = new ArrayList<>();
-            XWPFTable best = null;
             boolean seenTable = false;
+            XWPFTable biggest = null;
+            List<List<String>> rows = new ArrayList<>();
+            List<List<String>> pending = new ArrayList<>();
             for (IBodyElement e : doc.getBodyElements()) {
                 if (e instanceof XWPFParagraph p) {
                     String t = clean(p.getText());
                     if (!seenTable && !t.isEmpty() && head.size() < 30) head.add(t);
+                    else if (seenTable && !t.isEmpty() && HEADING_WORDS.matcher(t).find()) pending.add(List.of(t));
                 } else if (e instanceof XWPFTable t) {
                     seenTable = true;
-                    if (best == null || t.getRows().size() > best.getRows().size()) best = t;
+                    if (biggest == null || t.getRows().size() > biggest.getRows().size()) biggest = t;
+                    List<List<String>> own = rowsOf(t);
+                    if (hasCode(own)) {
+                        rows.addAll(pending);
+                        rows.addAll(own);
+                    }
+                    pending.clear();
                 }
             }
-            List<List<String>> rows = new ArrayList<>();
-            if (best != null) {
-                for (XWPFTableRow r : best.getRows()) {
-                    List<String> cells = new ArrayList<>();
-                    for (XWPFTableCell c : r.getTableCells()) cells.add(clean(c.getText()));
-                    rows.add(cells);
-                }
-            }
+            if (rows.isEmpty() && biggest != null) rows = rowsOf(biggest);
             return new RawDoc(head, rows);
         }
+    }
+
+    private static List<List<String>> rowsOf(XWPFTable t) {
+        List<List<String>> rows = new ArrayList<>();
+        for (XWPFTableRow r : t.getRows()) {
+            List<String> cells = new ArrayList<>();
+            for (XWPFTableCell c : r.getTableCells()) cells.add(clean(c.getText()));
+            rows.add(cells);
+        }
+        return rows;
     }
 
     private static RawDoc readDoc(byte[] data) throws IOException {
@@ -95,6 +122,7 @@ public final class KtpReader {
                 if (!t.isEmpty()) head.add(t);
             }
             List<List<String>> best = new ArrayList<>();
+            List<List<String>> withCodes = new ArrayList<>();
             TableIterator it = new TableIterator(range);
             while (it.hasNext()) {
                 Table t = it.next();
@@ -106,7 +134,9 @@ public final class KtpReader {
                     rows.add(cells);
                 }
                 if (rows.size() > best.size()) best = rows;
+                if (hasCode(rows)) withCodes.addAll(rows);
             }
+            if (!withCodes.isEmpty()) best = withCodes;
             return new RawDoc(head, best);
         }
     }

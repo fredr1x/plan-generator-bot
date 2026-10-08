@@ -19,6 +19,8 @@ WHAT TO OUTPUT
 
 9. Completeness: the message tells how many lessons these rows contain and their numbers ("Lessons in these rows"). Return exactly that many lessons, one for every listed number, in the same order. A lesson is never dropped because its row is short, repeated, empty in some cells or looks like a heading. If a row is hard to read, still return the lesson with what you can read and add a note.
 
+10. The size of a whole KTP: it always starts with lesson 1 in September and ends in May. It has 102 lessons (3 lessons a week) or 68 lessons (2 lessons a week). The table may be split over several tables or pages, and the rows you receive may be only a part of it (the first lesson number is then not 1): read exactly the lessons that are in the rows and never stop early, merge or skip lessons to reach a total. If a part clearly ends in the middle of the school year or does not start in September, that is fine for a part, but add a note when a lesson number is missing from the sequence.
+
 EXAMPLE 1 (a table)
 Column header row: № | Units | Theme | Learning objectives | Hours | Date
 R5: 1 | Unit 1: My day | Getting up | 4. 1. 1. 1 listen for sounds; 4. 3. 1. 1 read words | 1 |

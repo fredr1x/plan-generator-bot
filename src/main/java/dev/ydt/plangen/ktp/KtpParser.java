@@ -160,9 +160,27 @@ public final class KtpParser {
     /** The header row and its columns, or the columns found from the content of a table without a header. */
     private static Object[] detect(List<List<String>> rows) {
         Object[] found = detectHeader(rows);
-        if (found != null) return found;
-        Mapping m = detectByContent(rows);
-        return m == null ? null : new Object[] {-1, m};
+        Mapping byContent = detectByContent(rows);
+        if (found != null) {
+            // a header like "№ | Changeable themes | Themes | ..." can point at the wrong column: it is trusted only
+            // when the columns it names are filled in the lesson rows
+            if (byContent == null || mappingFits(rows, (Mapping) found[1])) return found;
+            return new Object[] {found[0], byContent};
+        }
+        return byContent == null ? null : new Object[] {-1, byContent};
+    }
+
+    /** True when most rows that have objective codes also have a topic and the codes in the mapped columns. */
+    private static boolean mappingFits(List<List<String>> rows, Mapping m) {
+        int lessons = 0;
+        int ok = 0;
+        for (List<String> r : rows) {
+            if (r.stream().noneMatch(c -> CODE.matcher(c).find())) continue;
+            lessons++;
+            if (m.topic() >= 0 && m.topic() < r.size() && !r.get(m.topic()).isBlank() && m.objectives() >= 0
+                    && m.objectives() < r.size() && CODE.matcher(r.get(m.objectives())).find()) ok++;
+        }
+        return lessons == 0 || ok >= 0.6 * lessons;
     }
 
     private static boolean isNumberHeader(String h) {
@@ -181,9 +199,9 @@ public final class KtpParser {
             "(?i)^\\s*(\\d)\\s*(?:st|nd|rd|d|th|-?я|-?й)?\\s*(?:term|quarter|четверть|тоқсан)\\b[^\\d]*(\\d+)?");
     private static final Pattern TERM_ROW = Pattern.compile(
             "(?i)(?:\\bterm\\s*[-–—]?\\s*(IV|III|II|I|\\d)\\b|\\b(IV|III|II|I|\\d)\\s*(?:st|nd|rd|th)?\\s*term\\b)"
-                    + "\\s*\\(?\\s*[-–—]?\\s*(\\d+)?\\s*(?:hours?|h)?\\s*\\)?");
+                    + "\\s*[-–—]?\\s*\\(?\\s*[-–—]?\\s*(\\d+)?\\s*(?:hours?|h)?\\s*\\)?");
     // "Unit 6" anywhere in a heading, but not inside brackets: "The natural world (Unit 6 p.68)" is a unit cell
-    private static final Pattern UNIT_ANY = Pattern.compile("(?i)(?<![(\\w])(unit|module)\\s*(\\d+)");
+    private static final Pattern UNIT_ANY = Pattern.compile("(?i)(?<!\\w)(unit|module)\\s*(\\d+)");
     private static final Pattern TOTAL = Pattern.compile("(?i)^\\s*(total|итого|всего|барлығы)\\b[^\\d]*(\\d+)?");
     private static final Pattern GRADE = Pattern.compile("(?i)(?:grade|класс|сынып)\\s*(\\d{1,2})|(\\d{1,2})\\s*[- ]?(?:класс|сынып|grade)");
     private static final Pattern YEAR = Pattern.compile("(20\\d\\d)\\s*[-–/]\\s*(20\\d\\d)");
@@ -351,6 +369,23 @@ public final class KtpParser {
         if (blankHours > 0) {
             out.warnings.add("Часы не указаны в " + blankHours + " уроках, считаю по 1 часу.");
         }
+        // a whole KTP always has 102 lessons (3 a week) or 68 (2 a week), starts in September and ends in May
+        int hours = out.totalHours();
+        if (hours != 102 && hours != 68) {
+            out.warnings.add("В КТП " + hours + " часов, а полный КТП содержит 102 урока (3 в неделю) или 68 (2 в "
+                    + "неделю). Возможно, часть файла не прочитана: проверьте, что в нём нет нескольких таблиц.");
+        }
+        String firstDate = out.lessons.stream().map(l -> l.date).filter(java.util.Objects::nonNull).findFirst().orElse(null);
+        String lastDate = out.lessons.stream().map(l -> l.date).filter(java.util.Objects::nonNull)
+                .reduce((x, y) -> y).orElse(null);
+        if (firstDate != null && !firstDate.substring(5, 7).equals("09")) {
+            out.warnings.add("КТП начинается не в сентябре (первая дата " + firstDate + "): КТП всегда начинается с "
+                    + "сентября, проверьте файл.");
+        }
+        if (lastDate != null && !lastDate.substring(5, 7).equals("05")) {
+            out.warnings.add("КТП заканчивается не в мае (последняя дата " + lastDate + "): КТП всегда заканчивается "
+                    + "в мае, проверьте файл.");
+        }
         if (out.declaredTotal != null && out.declaredTotal != out.totalHours()) {
             out.warnings.add("В файле указано всего " + out.declaredTotal + " часов, а в уроках получилось "
                     + out.totalHours() + ".");
@@ -483,10 +518,17 @@ public final class KtpParser {
     static String unitHeading(String text) {
         Matcher m = UNIT_ANY.matcher(text);
         if (!m.find()) return null;
-        String before = text.substring(0, m.start()).replaceAll("[\\s.,;:–-]+$", "").strip();
+        String head = text.substring(0, m.start()).stripTrailing();
+        if (head.endsWith("(")) head = head.substring(0, head.length() - 1); // "Charities and conflict (Unit 4 )"
+        String before = head.replaceAll("[\\s.,;:–-]+$", "").strip();
         String after = text.substring(m.end()).replaceAll("^[\\s.:–-]+", "").strip();
         String title = before.isEmpty() ? after : before;
-        title = unglue(title.replaceAll("\\(\\s*\\d+\\s*hours?\\s*\\)\\s*$", "").replaceAll("[\\s)]+$", ""));
+        title = title.replaceAll("\\(\\s*\\d+\\s*hours?\\s*\\)\\s*$", "").strip();
+        // a closing bracket that has no opening bracket is a leftover of "(Unit 4 )"; a balanced one is part of the title
+        while (title.endsWith(")") && title.chars().filter(ch -> ch == ')').count() > title.chars().filter(ch -> ch == '(').count()) {
+            title = title.substring(0, title.length() - 1).strip();
+        }
+        title = unglue(title);
         String word = m.group(1).substring(0, 1).toUpperCase(Locale.ROOT) + m.group(1).substring(1).toLowerCase(Locale.ROOT);
         return word + " " + m.group(2) + (title.isEmpty() ? "" : ": " + title);
     }

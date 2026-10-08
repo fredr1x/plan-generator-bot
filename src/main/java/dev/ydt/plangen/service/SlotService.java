@@ -83,12 +83,6 @@ public class SlotService {
 
         List<KtpLesson> queue = lessons.stream().filter(l -> l.seq >= startSeq && !fixed.contains(l.id)).toList();
 
-        // dates written in the KTP file are used as they are when every lesson has one, and they do not move later
-        if (!lessons.isEmpty() && lessons.stream().allMatch(l -> l.sourceDate != null)) {
-            if (existing.isEmpty()) return fromFileDates(k, c, queue, entries);
-            return new Result(List.of(), 0, 0, entries.size(), null, null, false, false, true);
-        }
-
         List<NonTeachingDay> off = NonTeachingDay.visible(c.teacherId, from).stream()
                 .filter(d -> d.appliesTo(c.grade)).toList();
         List<LocalDate> versions = ScheduleEntry.versionDates(c.teacherId);
@@ -98,6 +92,18 @@ public class SlotService {
                     .computeIfAbsent(e.weekday, w -> new ArrayList<>()).add(e.lessonNo);
         }
         byVersion.values().forEach(m -> m.values().forEach(l -> l.sort(null)));
+
+        // dates written in the KTP file are used when every lesson has one (a lesson on a day without a lesson of
+        // this class or a day off moves to the next free day, summative works never move), and they stay on later
+        // recalculations
+        if (!lessons.isEmpty() && lessons.stream().allMatch(l -> l.sourceDate != null)) {
+            if (!existing.isEmpty()) {
+                return new Result(List.of(), 0, 0, entries.size(), null, null, false, false, true);
+            }
+            java.util.function.Predicate<LocalDate> teaching = d -> terms.stream().anyMatch(t -> t.contains(d))
+                    && !isOff(d, off) && !periodsOn(versions, byVersion, d).isEmpty();
+            return fromFileDates(k, c, queue, lessons, entries, teaching, terms.get(terms.size() - 1).endsOn);
+        }
 
         List<TermReport> report = new ArrayList<>();
         int placed = 0;
@@ -183,35 +189,89 @@ public class SlotService {
         return new Result(report, placed, unplaced, entries.size(), first, last, false, false, false);
     }
 
-    private Result fromFileDates(Ktp k, SchoolClass c, List<KtpLesson> queue, List<ScheduleEntry> entries) {
+    private Result fromFileDates(Ktp k, SchoolClass c, List<KtpLesson> queue, List<KtpLesson> all,
+                                 List<ScheduleEntry> entries, java.util.function.Predicate<LocalDate> teaching,
+                                 LocalDate lastDay) {
+        List<LocalDate> fileDates = all.stream().map(l -> l.sourceDate).toList();
+        List<Boolean> fixedDates = all.stream().map(l -> "checkpoint".equals(l.kind) || "interim".equals(l.kind)).toList();
+        LocalDate[] planned = planFileDates(fileDates, fixedDates, teaching, lastDay);
+        java.util.Map<Long, LocalDate> dateOf = new java.util.HashMap<>();
+        for (int i = 0; i < all.size(); i++) dateOf.put(all.get(i).id, planned[i]);
+
         int placed = 0;
         LocalDate first = null;
         LocalDate last = null;
         for (KtpLesson l : queue) {
-            // the date comes from the file; the lesson number comes from the timetable that is in force that day.
-            // Two lessons on one day (a lesson moved from a holiday) get the class's periods one after the other,
-            // and when there are no more the first period that the teacher does not teach that day.
-            int wd = l.sourceDate.getDayOfWeek().getValue();
-            List<ScheduleEntry> day = ScheduleEntry.forDay(c.teacherId, wd, l.sourceDate);
+            LocalDate date = dateOf.get(l.id);
+            if (date == null) continue; // no free day left before the end of the year
+            // the lesson number comes from the timetable that is in force that day. Two lessons on one day (a lesson
+            // moved from a holiday) get the class's periods one after the other, and when there are no more the
+            // first period that the teacher does not teach that day.
+            int wd = date.getDayOfWeek().getValue();
+            List<ScheduleEntry> day = ScheduleEntry.forDay(c.teacherId, wd, date);
             int no = day.stream().filter(e -> e.classId == c.id).map(e -> e.lessonNo).sorted()
-                    .filter(n -> !periodTaken(c.id, l.sourceDate, n)).findFirst().orElse(-1);
+                    .filter(n -> !periodTaken(c.id, date, n)).findFirst().orElse(-1);
             if (no < 0) {
                 Set<Integer> busy = day.stream().map(e -> e.lessonNo).collect(Collectors.toSet());
                 no = 1;
-                while (busy.contains(no) || periodTaken(c.id, l.sourceDate, no)) no++;
+                while (busy.contains(no) || periodTaken(c.id, date, no)) no++;
             }
             KtpSlot s = new KtpSlot();
             s.ktpId = k.id;
             s.classId = c.id;
             s.lessonId = l.id;
-            s.slotDate = l.sourceDate;
+            s.slotDate = date;
             s.lessonNo = no;
             s.persist();
             placed++;
-            if (first == null || l.sourceDate.isBefore(first)) first = l.sourceDate;
-            if (last == null || l.sourceDate.isAfter(last)) last = l.sourceDate;
+            if (first == null || date.isBefore(first)) first = date;
+            if (last == null || date.isAfter(last)) last = date;
         }
         return new Result(List.of(), placed, queue.size() - placed, entries.size(), first, last, false, false, true);
+    }
+
+    /**
+     * Dates for lessons that have the date of the KTP file. A lesson on a teaching day keeps its date, also when
+     * two lessons share the day (the teacher's own decision). A lesson on a day that is not a teaching day (a day
+     * off, the vacation, a weekday without a lesson of the class) moves to the next teaching day that has no lesson
+     * yet; with no such day left before lastDay it has no date. Fixed lessons (the summative works) never move.
+     */
+    public static LocalDate[] planFileDates(List<LocalDate> dates, List<Boolean> fixed,
+                                            java.util.function.Predicate<LocalDate> teaching, LocalDate lastDay) {
+        int n = dates.size();
+        LocalDate[] out = new LocalDate[n];
+        Set<LocalDate> used = new HashSet<>();
+        for (int i = 0; i < n; i++) {
+            LocalDate d = dates.get(i);
+            if (d != null && (fixed.get(i) || teaching.test(d))) {
+                out[i] = d;
+                used.add(d);
+            }
+        }
+        for (int i = 0; i < n; i++) {
+            if (out[i] != null || dates.get(i) == null) continue;
+            for (LocalDate d = dates.get(i).plusDays(1); !d.isAfter(lastDay); d = d.plusDays(1)) {
+                if (teaching.test(d) && !used.contains(d)) {
+                    out[i] = d;
+                    used.add(d);
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
+    /** The lesson numbers of the class on a day in the timetable that is in force then (empty when none). */
+    private static List<Integer> periodsOn(List<LocalDate> versions,
+                                           java.util.Map<LocalDate, TreeMap<Integer, List<Integer>>> byVersion,
+                                           LocalDate d) {
+        LocalDate version = null;
+        for (LocalDate v : versions) {
+            if (!v.isAfter(d)) version = v;
+        }
+        TreeMap<Integer, List<Integer>> perDay = version == null ? null : byVersion.get(version);
+        List<Integer> nos = perDay == null ? null : perDay.get(d.getDayOfWeek().getValue());
+        return nos == null ? List.of() : nos;
     }
 
     private static boolean periodTaken(long classId, LocalDate date, int no) {
