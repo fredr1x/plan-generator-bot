@@ -2,6 +2,9 @@ Extract the lessons from these table rows.
 
 Column header row: {header}
 Previous state: {previous}
+Lessons in these rows: {expected}
 
 Rows:
 {rows}
+
+Return one lesson for every lesson number listed above, in the same order. Do not skip a lesson, even if its row looks short, odd or repeated.

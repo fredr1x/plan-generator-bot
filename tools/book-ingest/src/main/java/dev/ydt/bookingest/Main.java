@@ -304,8 +304,13 @@ public final class Main {
                 System.out.printf("%d pages, %d to load, model %s%n", total, todo.size(), cfg.model);
                 Summary s = todo.isEmpty() ? new Summary(0, List.of(), 0, 0)
                         : ingest(pdf, row.id, row.title, row.subject == null ? "" : row.subject, row.grade, todo, cfg);
+                int tolerated = Math.max(1, total / 50); // up to 2% of the pages
                 if (s.failed.isEmpty()) {
                     finish(cfg, row, "loaded", null, total);
+                } else if (s.failed.size() <= tolerated) {
+                    System.out.println("Pages that could not be read: " + s.failed + ". The book is marked as "
+                            + "loaded; run --book-id " + row.id + " again to retry them.");
+                    finish(cfg, row, "loaded", "pages not read: " + s.failed, total);
                 } else {
                     finish(cfg, row, "failed", s.failed.size() + " pages failed: " + s.failed
                             + " (the owner can run --book-id " + row.id + " again, loaded pages are skipped)", total);
@@ -458,9 +463,10 @@ public final class Main {
         messages.addObject().put("role", "system").put("content", SYSTEM_PROMPT);
         ObjectNode user = messages.addObject().put("role", "user");
         var parts = user.putArray("content");
-        parts.addObject().put("type", "text").put("text", "Book: " + title
-                + (subject.isBlank() ? "" : ", subject: " + subject) + (grade == null ? "" : ", grade " + grade)
-                + ". Extract this page.");
+        String basePrompt = "Book: " + title + (subject.isBlank() ? "" : ", subject: " + subject)
+                + (grade == null ? "" : ", grade " + grade) + ". Extract this page.";
+        ObjectNode textPart = parts.addObject();
+        textPart.put("type", "text").put("text", basePrompt);
         ObjectNode img = parts.addObject().put("type", "image_url").putObject("image_url");
         img.put("url", "data:image/jpeg;base64," + Base64.getEncoder().encodeToString(jpeg));
         img.put("detail", "high");
@@ -493,6 +499,10 @@ public final class Main {
                 JsonNode root = JSON.readTree(res.body());
                 JsonNode msg = root.path("choices").path(0).path("message");
                 String content = msg.path("content").asText("");
+                if ("length".equals(root.path("choices").path(0).path("finish_reason").asText())) {
+                    // the answer hit the token limit and is cut off in the middle (invalid JSON)
+                    throw new RuntimeException("cut off: finish_reason=length");
+                }
                 if (content.isBlank()) {
                     throw new RuntimeException("empty answer, finish_reason="
                             + root.path("choices").path(0).path("finish_reason").asText());
@@ -504,6 +514,16 @@ public final class Main {
                 throw e;
             } catch (Exception e) {
                 last = e;
+                boolean cut = e instanceof com.fasterxml.jackson.core.JsonProcessingException
+                        || String.valueOf(e.getMessage()).startsWith("cut off");
+                if (cut) {
+                    // a longer limit and a request for shorter texts: the same page would be cut off again
+                    body.put("max_completion_tokens", 32000);
+                    textPart.put("text", basePrompt + " The previous answer was cut off because it was too long. "
+                            + "Be concise: keep every long text field short (theory and reading text at most 60 "
+                            + "words each) and shorten long exercise prompts, but keep every exercise and its key.");
+                    System.out.println("  page answer was cut off, retrying shorter (attempt " + attempt + ")");
+                }
                 Thread.sleep(2000L * attempt * attempt);
             }
         }

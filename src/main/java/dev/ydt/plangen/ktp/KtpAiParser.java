@@ -74,16 +74,7 @@ public class KtpAiParser {
             if (!String.join("", rows.get(i)).isBlank()) data.add(i);
         }
 
-        List<AiLesson> lessons = new ArrayList<>();
-        Map<Integer, Integer> terms = new LinkedHashMap<>();
-        List<String> notes = new ArrayList<>();
-        Integer total = null;
-        String unit = "";
-        Integer term = null;
-        Integer lastNumber = null;
-        int tokensIn = 0;
-        int tokensOut = 0;
-        int chunks = 0;
+        Run run = new Run();
         long started = System.nanoTime();
 
         int numCol = flat ? -1 : KtpParser.numberColumn(rows);
@@ -98,42 +89,117 @@ public class KtpAiParser {
                     : numCol >= 0 && !startsLesson(rows.get(data.get(to)), numCol))) to++;
             List<Integer> part = data.subList(from, to);
             from = to;
-            String text = part.stream().map(i -> line(i, rows.get(i))).collect(Collectors.joining("\n"));
-            String previous = lessons.isEmpty() ? "none (these are the first rows)"
-                    : "unit = \"" + unit + "\", term = " + term + ", last lesson number = " + lastNumber;
-            dev.langchain4j.service.Result<KtpChunk> res = call(header, previous, text);
-            chunks++;
-            TokenUsage u = res.tokenUsage();
-            int in = u == null || u.inputTokenCount() == null ? 0 : u.inputTokenCount();
-            int out = u == null || u.outputTokenCount() == null ? 0 : u.outputTokenCount();
-            tokensIn += in;
-            tokensOut += out;
-            KtpChunk c = res.content();
-            LOG.infof("[ktp-ai] chunk %d: %d rows, %d lessons, tokens in=%d out=%d, finish=%s", chunks, part.size(),
-                    c == null || c.lessons() == null ? 0 : c.lessons().size(), in, out, res.finishReason());
-            if (c == null) continue;
-            if (c.lessons() != null) {
-                for (AiLesson l : c.lessons()) {
-                    lessons.add(l);
-                    if (l.unit() != null && !l.unit().isBlank()) unit = l.unit();
-                    if (l.term() != null) term = l.term();
-                    if (l.number() != null) lastNumber = l.number();
-                }
-            }
-            if (c.terms() != null) {
-                for (AiTerm t : c.terms()) {
-                    if (t.number() != null) terms.merge(t.number(), t.hours() == null ? -1 : t.hours(), (a, b) -> b);
-                }
-            }
-            if (c.total() != null) total = c.total();
-            if (c.notes() != null) notes.addAll(c.notes());
+            readPart(run, header, rows, part, flat, flatStart, numCol, 0);
         }
 
-        Parsed p = build(raw, lessons, terms, total, notes, det);
-        double cost = tokensIn * priceIn / 1_000_000.0 + tokensOut * priceOut / 1_000_000.0;
-        LOG.infof("[ktp-ai] done: %d lessons from %d chunks, tokens in=%d out=%d, est. cost $%.4f, %d ms",
-                p.lessons.size(), chunks, tokensIn, tokensOut, cost, (System.nanoTime() - started) / 1_000_000);
-        return new Result(p, tokensIn, tokensOut, chunks);
+        Parsed p = build(raw, run.lessons, run.terms, run.total, run.notes, det);
+        p.warnings.addAll(run.warnings);
+        double cost = run.tokensIn * priceIn / 1_000_000.0 + run.tokensOut * priceOut / 1_000_000.0;
+        LOG.infof("[ktp-ai] done: %d lessons from %d requests, tokens in=%d out=%d, est. cost $%.4f, %d ms",
+                p.lessons.size(), run.calls, run.tokensIn, run.tokensOut, cost,
+                (System.nanoTime() - started) / 1_000_000);
+        return new Result(p, run.tokensIn, run.tokensOut, run.calls);
+    }
+
+    /** What has been read so far: the lessons and the values that the next part inherits. */
+    private static final class Run {
+        final List<AiLesson> lessons = new ArrayList<>();
+        final Map<Integer, Integer> terms = new LinkedHashMap<>();
+        final List<String> notes = new ArrayList<>();
+        final List<String> warnings = new ArrayList<>();
+        Integer total;
+        String unit = "";
+        Integer term;
+        Integer lastNumber;
+        int tokensIn;
+        int tokensOut;
+        int calls;
+    }
+
+    /** Maximum number of times a part is cut in two when the answer misses lessons. */
+    private static final int MAX_SPLIT_DEPTH = 3;
+
+    /**
+     * Reads one part of the file and checks that the answer holds every lesson number that the rows contain. When
+     * lessons are missing the part is cut in two at a lesson row and each half is read again (a smaller request
+     * is more reliable); a single lesson that still cannot be read is reported to the teacher.
+     */
+    private void readPart(Run run, String header, List<List<String>> rows, List<Integer> part, boolean flat,
+                          boolean[] flatStart, int numCol, int depth) {
+        List<Integer> starts = new ArrayList<>();
+        List<Integer> expected = new ArrayList<>();
+        for (int i : part) {
+            boolean start = flat ? flatStart[i] : numCol >= 0 && startsLesson(rows.get(i), numCol);
+            if (!start) continue;
+            starts.add(i);
+            String cell = flat ? rows.get(i).get(1) : rows.get(i).get(numCol).strip();
+            expected.add(Integer.parseInt(cell));
+        }
+        String expectedText = expected.isEmpty() ? "not known, read every lesson row"
+                : "exactly " + expected.size() + " lessons, with the lesson numbers "
+                + expected.stream().map(String::valueOf).collect(Collectors.joining(", "));
+        String text = part.stream().map(i -> line(i, rows.get(i))).collect(Collectors.joining("\n"));
+        String previous = run.lessons.isEmpty() ? "none (these are the first rows)"
+                : "unit = \"" + run.unit + "\", term = " + run.term + ", last lesson number = " + run.lastNumber;
+
+        dev.langchain4j.service.Result<KtpChunk> res = call(header, previous, expectedText, text);
+        run.calls++;
+        TokenUsage u = res.tokenUsage();
+        int in = u == null || u.inputTokenCount() == null ? 0 : u.inputTokenCount();
+        int out = u == null || u.outputTokenCount() == null ? 0 : u.outputTokenCount();
+        run.tokensIn += in;
+        run.tokensOut += out;
+        KtpChunk c = res.content();
+        List<AiLesson> got = c == null || c.lessons() == null ? List.of() : c.lessons();
+        List<Integer> missing = missingNumbers(expected, got);
+        LOG.infof("[ktp-ai] request %d: %d rows, expected %d lessons, got %d, missing %s, tokens in=%d out=%d, "
+                + "finish=%s", run.calls, part.size(), expected.size(), got.size(), missing, in, out,
+                res.finishReason());
+
+        if (!missing.isEmpty() && starts.size() > 1 && depth < MAX_SPLIT_DEPTH) {
+            int cut = part.indexOf(starts.get(starts.size() / 2));
+            LOG.warnf("[ktp-ai] lessons %s are missing: the part is cut in two and read again", missing);
+            readPart(run, header, rows, part.subList(0, cut), flat, flatStart, numCol, depth + 1);
+            readPart(run, header, rows, part.subList(cut, part.size()), flat, flatStart, numCol, depth + 1);
+            return;
+        }
+        if (!missing.isEmpty()) {
+            run.warnings.add("Не удалось прочитать из файла уроки с номерами " + missing + ": проверьте КТП и "
+                    + "добавьте их вручную или пришлите файл ещё раз.");
+        }
+        if (c == null) return;
+        for (AiLesson l : got) {
+            run.lessons.add(l);
+            if (l.unit() != null && !l.unit().isBlank()) run.unit = l.unit();
+            if (l.term() != null) run.term = l.term();
+            if (l.number() != null) run.lastNumber = l.number();
+        }
+        if (c.terms() != null) {
+            for (AiTerm t : c.terms()) {
+                if (t.number() != null) run.terms.merge(t.number(), t.hours() == null ? -1 : t.hours(), (a, b) -> b);
+            }
+        }
+        if (c.total() != null) run.total = c.total();
+        if (c.notes() != null) run.notes.addAll(c.notes());
+    }
+
+    /** The lesson numbers that the rows contain and the answer does not (each number counts as often as it occurs). */
+    static List<Integer> missingNumbers(List<Integer> expected, List<AiLesson> got) {
+        // when the answer has no lesson numbers at all they cannot be compared, only the count can
+        if (got.stream().allMatch(l -> l.number() == null)) {
+            return got.size() >= expected.size() ? List.of() : expected;
+        }
+        Map<Integer, Integer> have = new LinkedHashMap<>();
+        for (AiLesson l : got) {
+            if (l.number() != null) have.merge(l.number(), 1, Integer::sum);
+        }
+        List<Integer> missing = new ArrayList<>();
+        for (Integer n : expected) {
+            Integer left = have.get(n);
+            if (left == null || left == 0) missing.add(n);
+            else have.put(n, left - 1);
+        }
+        return missing;
     }
 
     /**
@@ -161,12 +227,13 @@ public class KtpAiParser {
         return numCol < cells.size() && cells.get(numCol).strip().matches("\\d{1,3}");
     }
 
-    private dev.langchain4j.service.Result<KtpChunk> call(String header, String previous, String rows) {
+    private dev.langchain4j.service.Result<KtpChunk> call(String header, String previous, String expected,
+                                                          String rows) {
         try {
-            return model.extract(header, previous, rows);
+            return model.extract(header, previous, expected, rows);
         } catch (RuntimeException first) {
             LOG.warnf("[ktp-ai] request failed, trying once more: %s", first.getMessage());
-            return model.extract(header, previous, rows);
+            return model.extract(header, previous, expected, rows);
         }
     }
 

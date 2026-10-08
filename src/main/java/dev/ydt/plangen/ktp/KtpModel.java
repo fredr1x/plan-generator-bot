@@ -14,5 +14,6 @@ public interface KtpModel {
 
     @SystemMessage(fromResource = "prompts/ktp-system.txt")
     @UserMessage(fromResource = "prompts/ktp-user.txt")
-    Result<KtpChunk> extract(@V("header") String header, @V("previous") String previous, @V("rows") String rows);
+    Result<KtpChunk> extract(@V("header") String header, @V("previous") String previous,
+                             @V("expected") String expected, @V("rows") String rows);
 }

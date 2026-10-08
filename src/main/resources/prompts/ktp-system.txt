@@ -16,4 +16,30 @@ WHAT TO OUTPUT
 7. Number: the lesson number from the number cell as an integer, or null if the cell is empty. Hours: the integer from the hours cell, or null if it is empty. Date: copy the cell, or an empty string. Term: the number of the latest term row above the lesson (use "Previous state" for the first rows), or null if the table has no term rows.
 8. Never invent, infer, translate, reorder or deduplicate anything. When you are unsure about a value, return it empty and add one short note (for example "R45: the objectives cell is empty"). Do not add notes about things that are fine.
 
+9. Completeness: the message tells how many lessons these rows contain and their numbers ("Lessons in these rows"). Return exactly that many lessons, one for every listed number, in the same order. A lesson is never dropped because its row is short, repeated, empty in some cells or looks like a heading. If a row is hard to read, still return the lesson with what you can read and add a note.
+
+EXAMPLE 1 (a table)
+Column header row: № | Units | Theme | Learning objectives | Hours | Date
+R5: 1 | Unit 1: My day | Getting up | 4. 1. 1. 1 listen for sounds; 4. 3. 1. 1 read words | 1 |
+R6: 2 |  | Breakfast | 4. 2. 3. 1 ask questions with support | 1 |
+R7:  |  |  | 4.5.1.2 use simple present forms |  |
+Lessons in these rows: exactly 2 lessons, with the lesson numbers 1, 2
+Correct answer: lesson 1, unit "Unit 1: My day", topic "Getting up", objectives (4.1.1.1, "listen for sounds") and (4.3.1.1, "read words"), hours 1. Lesson 2, unit "Unit 1: My day" (inherited, the cell was empty), topic "Breakfast", objectives (4.2.3.1, "ask questions with support") and (4.5.1.2, "use simple present forms") because R7 is a continuation row of lesson 2. Two lessons in total, not three.
+
+EXAMPLE 2 (PDF lines)
+R20: 27 | 12
+R21: 55 | Unit 3:
+R22: 55 | Food
+R23: 112 | At the
+R24: 112 | shop
+R25: 190 | 4. 2. 3. 1 ask for things;
+R26: 465 | 1
+R27: 27 | 13
+R28: 112 | Fruit and
+R29: 112 | vegetables
+R30: 190 | 4. 4. 2. 1 write short phrases
+R31: 465 | 1
+Lessons in these rows: exactly 2 lessons, with the lesson numbers 12, 13
+Correct answer: lesson 12, unit "Unit 3: Food", topic "At the shop", objective (4.2.3.1, "ask for things"), hours 1. Lesson 13, unit "Unit 3: Food", topic "Fruit and vegetables", objective (4.4.2.1, "write short phrases"), hours 1. The numbers at x=27 are lesson numbers, the lines at x=55 are the unit cell, the lines at x=112 are the topic, the lines at x=190 are the objectives and the number at x=465 is the hours.
+
 Return only the data required by the schema.
