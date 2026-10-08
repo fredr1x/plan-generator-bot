@@ -2,6 +2,7 @@ package dev.ydt.plangen.bot;
 
 import dev.ydt.plangen.domain.ConvState;
 import dev.ydt.plangen.domain.Teacher;
+import dev.ydt.plangen.domain.TeacherLink;
 import dev.ydt.plangen.telegram.Dto.CallbackQuery;
 import dev.ydt.plangen.telegram.Dto.Message;
 import dev.ydt.plangen.telegram.Dto.Update;
@@ -89,7 +90,7 @@ public class Router {
 
     /** A Word file is taken as a KTP and read; the teacher checks the result before anything is saved. */
     private void document(Message m) {
-        long uid = m.from().id();
+        long uid = TeacherLink.resolve(m.from().id());
         long chat = m.chat().id();
         Teacher teacher = Teacher.findById(uid);
         if (teacher == null || !teacher.isComplete()) {
@@ -101,7 +102,7 @@ public class Router {
     }
 
     private void text(Message m) {
-        long uid = m.from().id();
+        long uid = TeacherLink.resolve(m.from().id());
         long chat = m.chat().id();
         String t = m.text().strip();
         if (t.isEmpty()) {
@@ -242,7 +243,7 @@ public class Router {
         if (cb.message() == null || cb.data() == null || cb.from() == null) {
             return;
         }
-        long uid = cb.from().id();
+        long uid = TeacherLink.resolve(cb.from().id());
         long chat = cb.message().chat().id();
         long msg = cb.message().messageId();
         String[] p = cb.data().split(":");

@@ -3,6 +3,10 @@ package dev.ydt.plangen.bot;
 import static dev.ydt.plangen.bot.Kb.btn;
 
 import dev.ydt.plangen.domain.Book;
+import dev.ydt.plangen.domain.KtpClass;
+import dev.ydt.plangen.domain.NonTeachingDay;
+import dev.ydt.plangen.domain.ScheduleEntry;
+import dev.ydt.plangen.domain.SchoolTerm;
 import dev.ydt.plangen.domain.KtpLesson;
 import dev.ydt.plangen.domain.KtpSlot;
 import dev.ydt.plangen.domain.SchoolClass;
@@ -14,6 +18,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -115,41 +123,87 @@ public class EveningFlow {
         List<KtpSlot> rows = KtpSlot.live(uid, monday, sunday);
         Kb.Rows nav = Kb.rows();
         nav.add(offset == 0 ? btn("➡️ Следующая неделя", "ev:wk:1") : btn("⬅️ Эта неделя", "ev:wk:0"));
-        if (rows.isEmpty()) {
-            boolean any = !KtpSlot.live(uid, today, today.plusDays(400)).isEmpty();
-            bot.send(chat, "На " + title + " уроков по КТП нет."
-                    + (any ? " Это каникулы, выходные или в расписании на эти дни нет уроков."
-                    : " Загрузите КТП (/ktp), заполните /schedule и расставьте даты."), nav.build());
-            return;
-        }
-        Map<Long, KtpLesson> lessons = new LinkedHashMap<>();
-        Map<Long, SchoolClass> classes = new LinkedHashMap<>();
-        TreeMap<LocalDate, List<KtpSlot>> byDay = new TreeMap<>();
+
+        Map<Long, SchoolClass> classes = ScheduleFlow.classMap(uid);
+        Map<Long, KtpLesson> lessons = new HashMap<>();
+        Map<LocalDate, Map<String, KtpSlot>> slotAt = new HashMap<>();
         for (KtpSlot s : rows) {
             lessons.computeIfAbsent(s.lessonId, id -> KtpLesson.findById(id));
-            classes.computeIfAbsent(s.classId, id -> SchoolClass.findById(id));
-            byDay.computeIfAbsent(s.slotDate, d -> new ArrayList<>()).add(s);
+            slotAt.computeIfAbsent(s.slotDate, d -> new LinkedHashMap<>()).put(s.classId + "#" + s.lessonNo, s);
         }
+        List<SchoolTerm> terms = SchoolTerm.all();
+        record Item(int no, String cls, String text) {}
         StringBuilder sb = new StringBuilder("🗓 Уроки на ").append(title);
         int ready = 0;
         int total = 0;
-        for (var day : byDay.entrySet()) {
-            sb.append("\n\n").append(Dates.dayShort(Dates.weekday(day.getKey()))).append(' ')
-                    .append(day.getKey().format(Dates.SHORT));
-            for (KtpSlot s : day.getValue()) {
-                KtpLesson l = lessons.get(s.lessonId);
-                SchoolClass c = classes.get(s.classId);
-                boolean ok = KtpSlot.PREPARED.equals(s.status);
+        int shownLessons = 0;
+        for (LocalDate d = monday; !d.isAfter(sunday); d = d.plusDays(1)) {
+            final LocalDate day = d;
+            boolean inTerm = terms.stream().anyMatch(t -> t.contains(day));
+            Map<String, KtpSlot> slots = slotAt.getOrDefault(day, Map.of());
+            List<Item> items = new ArrayList<>();
+            Set<String> used = new HashSet<>();
+            // every lesson of the timetable, with the lesson of the KTP when there is one
+            for (ScheduleEntry e : ScheduleEntry.forDay(uid, day.getDayOfWeek().getValue(), day)) {
+                SchoolClass c = classes.get(e.classId);
+                if (c == null) continue;
+                String key = e.classId + "#" + e.lessonNo;
+                KtpSlot slot = slots.get(key);
+                if (slot != null) {
+                    used.add(key);
+                    items.add(new Item(slot.lessonNo, c.label(), slotLine(slot, lessons.get(slot.lessonId))));
+                    total++;
+                    if (KtpSlot.PREPARED.equals(slot.status)) ready++;
+                    continue;
+                }
+                if (!inTerm) continue; // vacation: no lesson is expected
+                NonTeachingDay off = NonTeachingDay.visible(uid, day).stream()
+                        .filter(n -> n.covers(day) && n.appliesTo(c.grade)).findFirst().orElse(null);
+                items.add(new Item(e.lessonNo, c.label(), off != null
+                        ? "выходной" + (off.title == null ? "" : ": " + Kb.trunc(off.title, 30))
+                        : "нет урока по КТП" + noKtpReason(c, day)));
+            }
+            for (var en : slots.entrySet()) { // a lesson of the KTP that is not in the timetable of that day
+                if (used.contains(en.getKey())) continue;
+                KtpSlot slot = en.getValue();
+                items.add(new Item(slot.lessonNo, classes.get(slot.classId) == null ? "?" : classes.get(slot.classId).label(),
+                        slotLine(slot, lessons.get(slot.lessonId))));
                 total++;
-                if (ok) ready++;
-                sb.append("\n").append(s.lessonNo).append(" ур. · ").append(c == null ? "?" : c.label()).append(" — ")
-                        .append(l == null ? "?" : Kb.trunc(l.title(), 45)).append(ok ? " ✅" : "");
+                if (KtpSlot.PREPARED.equals(slot.status)) ready++;
+            }
+            if (items.isEmpty()) continue;
+            items.sort(Comparator.comparingInt(Item::no).thenComparing(Item::cls));
+            sb.append("\n\n").append(Dates.dayShort(Dates.weekday(day))).append(' ').append(day.format(Dates.SHORT));
+            for (Item it : items) {
+                sb.append("\n").append(it.no()).append(" ур. · ").append(it.cls()).append(" — ").append(it.text());
+                shownLessons++;
             }
         }
+        if (shownLessons == 0) {
+            boolean any = !KtpSlot.live(uid, today, today.plusDays(400)).isEmpty();
+            bot.send(chat, "На " + title + " уроков нет."
+                    + (any ? " Это каникулы, выходные или в расписании на эти дни нет уроков."
+                    : " Заполните /schedule, загрузите КТП (/ktp) и расставьте даты."), nav.build());
+            return;
+        }
         sb.append("\n\nПланов готово: ").append(ready).append(" из ").append(total).append(". ✅ значит план "
-                + "составлен.");
+                + "составлен. «Нет урока по КТП» значит, что в расписании урок есть, а в КТП на эту дату нет.");
         nav.add(btn("📅 Предложение на ближайший день", "ev:next"));
         bot.send(chat, Kb.trunc(sb.toString(), 3900), nav.build());
+    }
+
+    private static String slotLine(KtpSlot s, KtpLesson l) {
+        return (l == null ? "?" : Kb.trunc(l.title(), 45)) + (KtpSlot.PREPARED.equals(s.status) ? " ✅" : "");
+    }
+
+    /** Why a timetable lesson has no KTP lesson that day. */
+    private String noKtpReason(SchoolClass c, LocalDate day) {
+        if (KtpClass.count("classId", c.id) == 0) return " (к классу не привязан КТП)";
+        LocalDate first = KtpSlot.getEntityManager()
+                .createQuery("select min(s.slotDate) from KtpSlot s where s.classId = ?1", LocalDate.class)
+                .setParameter(1, c.id).getSingleResult();
+        if (first != null && day.isBefore(first)) return " (КТП начинается с " + first.format(Dates.SHORT) + ")";
+        return "";
     }
 
     // ------------------------------------------------------------------ callbacks

@@ -4,6 +4,7 @@ import dev.ydt.plangen.domain.NonTeachingDay;
 import dev.ydt.plangen.domain.ScheduleEntry;
 import dev.ydt.plangen.domain.SchoolTerm;
 import dev.ydt.plangen.domain.Teacher;
+import dev.ydt.plangen.domain.TeacherLink;
 import dev.ydt.plangen.domain.TeacherSettings;
 import dev.ydt.plangen.service.SlotService;
 import dev.ydt.plangen.service.TimeService;
@@ -97,7 +98,13 @@ public class EveningJob {
         if (next.isPresent() && next.get().isBefore(today.plusDays(MAX_DAYS_AHEAD + 1))) {
             if (claim(today, uid, "evening")) {
                 LOG.infof("[evening-job] user=%d: lessons on %s, mode=%s", uid, next.get(), st.mode);
-                evening.propose(uid, uid, next.get(), true);
+                List<Long> chats = TeacherLink.chatsOf(uid);
+                evening.propose(uid, chats.get(0), next.get(), true);
+                if (!TeacherSettings.AUTO.equals(st.mode)) {
+                    for (Long other : chats.subList(1, chats.size())) {
+                        evening.propose(uid, other, next.get(), false);
+                    }
+                }
             }
             return;
         }
@@ -108,8 +115,10 @@ public class EveningJob {
         NonTeachingDay off = NonTeachingDay.visible(uid, tomorrow).stream().filter(n -> n.covers(tomorrow))
                 .findFirst().orElse(null);
         if (off != null && claim(today, uid, "holiday")) {
-            bot.send(uid, "Завтра выходной: " + (off.title == null ? "день без уроков" : off.title)
-                    + ". Уроки по КТП сдвинуты на следующие дни.", null);
+            for (Long chatId : TeacherLink.chatsOf(uid)) {
+                bot.send(chatId, "Завтра выходной: " + (off.title == null ? "день без уроков" : off.title)
+                        + ". Уроки по КТП сдвинуты на следующие дни.", null);
+            }
         }
     }
 
