@@ -439,6 +439,17 @@ public class PlanFlow {
         bot.send(chat, question, null);
     }
 
+    /** Edits of a lesson that comes from the KTP are kept in the KTP lesson, not only in this draft. */
+    private void saveToKtp(Draft d) {
+        KtpLesson l = d.ktpLessonId == null ? null : KtpLesson.findById(d.ktpLessonId);
+        if (l == null) return;
+        String unit = l.unitTitle == null || l.unitTitle.isBlank() ? l.topic : l.unitTitle;
+        if (!blank(d.section) && !d.section.equals(unit)) l.unitTitle = d.section;
+        if (!blank(d.topic)) l.topic = d.topic;
+        if (!blank(d.objectives)) l.objectives = d.objectives;
+        if (!d.books.isEmpty()) l.bookRefs = bookFlow.toJson(d.books);
+    }
+
     private void confirm(long uid, long chat, Draft d) {
         List<SchoolClass> classes = classes(uid, d);
         int students = classes.stream().mapToInt(c -> c.studentCount).sum();
@@ -451,6 +462,7 @@ public class PlanFlow {
                 + "Цели обучения:\n" + Kb.trunc(d.objectives, 700)
                 + bookFlow.summaryLine(d)
                 + (d.notes.isBlank() ? "" : "\nПожелания: " + Kb.trunc(d.notes, 300));
+        saveToKtp(d);
         save(uid, PLAN_CONFIRM, d);
         Kb.Rows rows = Kb.rows().add(btn("✅ Составить план", "pl:go"));
         if (d.sourcePlanId != null) {

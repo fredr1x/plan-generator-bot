@@ -99,6 +99,11 @@ public class EveningJob {
             if (claim(today, uid, "evening")) {
                 LOG.infof("[evening-job] user=%d: lessons on %s, mode=%s", uid, next.get(), st.mode);
                 List<Long> chats = TeacherLink.chatsOf(uid);
+                if (today.getDayOfWeek().getValue() >= 6 && !TeacherSettings.AUTO.equals(st.mode)) {
+                    // weekend: the whole next week with the "make all plans" button
+                    for (Long chatId : chats) evening.week(uid, chatId, 1);
+                    return;
+                }
                 evening.propose(uid, chats.get(0), next.get(), true);
                 if (!TeacherSettings.AUTO.equals(st.mode)) {
                     for (Long other : chats.subList(1, chats.size())) {

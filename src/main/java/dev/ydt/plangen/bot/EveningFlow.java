@@ -188,6 +188,9 @@ public class EveningFlow {
         }
         sb.append("\n\nПланов готово: ").append(ready).append(" из ").append(total).append(". ✅ значит план "
                 + "составлен. «Нет урока по КТП» значит, что в расписании урок есть, а в КТП на эту дату нет.");
+        long todo = rows.stream().filter(s -> !s.slotDate.isBefore(today) && !KtpSlot.PREPARED.equals(s.status))
+                .map(s -> s.slotDate + "#" + s.lessonId).distinct().count();
+        if (todo > 0) nav.add(btn("✅ Составить планы недели (" + todo + ")", "ev:wgo:" + offset));
         nav.add(btn("📅 Предложение на ближайший день", "ev:next"));
         bot.send(chat, Kb.trunc(sb.toString(), 3900), nav.build());
     }
@@ -214,6 +217,18 @@ public class EveningFlow {
             case "no" -> bot.edit(chat, msgId, "Хорошо, напомню завтра вечером. Планы можно составить в /plan.", null);
             case "next" -> tomorrow(uid, chat);
             case "wk" -> week(uid, chat, "1".equals(p[2]) ? 1 : 0);
+            case "wgo" -> {
+                LocalDate today = time.today();
+                LocalDate monday = today.minusDays(today.getDayOfWeek().getValue() - 1).plusWeeks("1".equals(p[2]) ? 1 : 0);
+                int n = 0;
+                for (LocalDate d = monday; !d.isAfter(monday.plusDays(6)); d = d.plusDays(1)) {
+                    if (d.isBefore(today)) continue;
+                    for (Group g : groups(uid, d)) {
+                        if (!g.prepared() && generate(uid, chat, g, d, true)) n++;
+                    }
+                }
+                bot.send(chat, "Составляю планов на неделю: " + n + ". Файлы придут отдельными сообщениями.", null);
+            }
             case "go" -> {
                 LocalDate date = LocalDate.parse(p[2]);
                 int n = 0;
