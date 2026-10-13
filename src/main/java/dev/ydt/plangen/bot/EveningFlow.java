@@ -191,6 +191,7 @@ public class EveningFlow {
         long todo = rows.stream().filter(s -> !s.slotDate.isBefore(today) && !KtpSlot.PREPARED.equals(s.status))
                 .map(s -> s.slotDate + "#" + s.lessonId).distinct().count();
         if (todo > 0) nav.add(btn("✅ Составить планы недели (" + todo + ")", "ev:wgo:" + offset));
+        if (!lessons.isEmpty()) nav.add(btn("✏️ Изменить урок (темы, цели, страницы)", "ev:wed:" + offset));
         nav.add(btn("📅 Предложение на ближайший день", "ev:next"));
         bot.send(chat, Kb.trunc(sb.toString(), 3900), nav.build());
     }
@@ -217,6 +218,19 @@ public class EveningFlow {
             case "no" -> bot.edit(chat, msgId, "Хорошо, напомню завтра вечером. Планы можно составить в /plan.", null);
             case "next" -> tomorrow(uid, chat);
             case "wk" -> week(uid, chat, "1".equals(p[2]) ? 1 : 0);
+            case "wed" -> {
+                LocalDate today = time.today();
+                LocalDate monday = today.minusDays(today.getDayOfWeek().getValue() - 1).plusWeeks("1".equals(p[2]) ? 1 : 0);
+                Kb.Rows rows = Kb.rows();
+                for (LocalDate d = monday; !d.isAfter(monday.plusDays(6)); d = d.plusDays(1)) {
+                    if (d.isBefore(today)) continue;
+                    for (Group g : groups(uid, d)) {
+                        rows.add(btn(Kb.trunc(Dates.dayShort(Dates.weekday(d)) + " " + d.format(Dates.SHORT) + " · "
+                                + labels(g) + " · " + g.lesson().title(), 58), "ev:e:" + d + ":" + g.lesson().id));
+                    }
+                }
+                bot.send(chat, "Какой урок изменить? Откроется экран с темой, целями и страницами книги.", rows.build());
+            }
             case "wgo" -> {
                 LocalDate today = time.today();
                 LocalDate monday = today.minusDays(today.getDayOfWeek().getValue() - 1).plusWeeks("1".equals(p[2]) ? 1 : 0);

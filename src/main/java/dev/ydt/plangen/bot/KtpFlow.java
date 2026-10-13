@@ -433,12 +433,21 @@ public class KtpFlow {
     /** Which grade is the KTP for: the grades of the teacher's classes, the one found in the file is marked. */
     private void askGrade(long uid, long chat, Import d) {
         Integer guess = d.parsed.grade != null ? d.parsed.grade : KtpParser.gradeFromCodes(d.parsed);
-        java.util.TreeSet<Integer> grades = new java.util.TreeSet<>();
-        SchoolClass.<SchoolClass>forTeacher(uid).forEach(c -> grades.add(c.grade));
-        if (guess != null) grades.add(guess);
+        // one button per grade (and track for grades 10-11) of the teacher's classes: a tap gives both answers
+        java.util.TreeSet<String> options = new java.util.TreeSet<>(java.util.Comparator
+                .comparingInt((String o) -> Integer.parseInt(o.split(":")[0])).thenComparing(o -> o));
+        SchoolClass.<SchoolClass>forTeacher(uid).forEach(c -> options.add(c.grade + (c.grade >= 10 && c.track != null
+                ? ":" + (Book.NATURAL_MATH.equals(c.track) ? "nm" : "sh") : "")));
+        if (guess != null && options.stream().noneMatch(o -> o.startsWith(guess + ":") || o.equals(String.valueOf(guess)))) {
+            options.add(String.valueOf(guess));
+        }
         Kb.Rows rows = Kb.rows();
-        for (Integer g : grades) {
-            rows.add(btn(g + " класс" + (g.equals(guess) ? " (так в файле)" : ""), "ktp:g:" + g));
+        for (String o : options) {
+            String[] a = o.split(":");
+            int g = Integer.parseInt(a[0]);
+            String label = g + " класс" + (a.length > 1 ? ", " + Book.trackLabel("nm".equals(a[1])
+                    ? Book.NATURAL_MATH : Book.SOCIAL_HUMANITIES) : "") + (guess != null && g == guess ? " (так в файле)" : "");
+            rows.add(btn(label, "ktp:g:" + o));
         }
         rows.add(btn("Другой класс", "ktp:g:x"));
         save(uid, KTP_GRADE, d);
@@ -511,6 +520,11 @@ public class KtpFlow {
                 .filter(c -> c.grade == d.grade && (d.track == null || c.track == null || c.track.equals(d.track)))
                 .toList();
         if (fitting.isEmpty()) {
+            if (!SchoolClass.forTeacher(uid).isEmpty()) {
+                bot.send(chat, "Среди ваших классов нет подходящих (" + d.grade + " класс"
+                        + (d.track == null ? "" : ", " + Book.trackLabel(d.track)) + "): КТП сохраню без привязки. "
+                        + "Добавьте класс в /classes и привяжите КТП кнопкой «Классы» в /ktp.", null);
+            }
             saveKtp(uid, chat, d);
             return;
         }
@@ -609,7 +623,7 @@ public class KtpFlow {
                 }
                 d.grade = Integer.valueOf(p[2]);
                 d.gradeAsked = true;
-                d.track = null;
+                d.track = p.length > 3 ? ("nm".equals(p[3]) ? Book.NATURAL_MATH : Book.SOCIAL_HUMANITIES) : null;
                 review(uid, chat, d);
             }
             case "t" -> {
