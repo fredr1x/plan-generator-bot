@@ -103,7 +103,7 @@ public class EveningFlow {
         }
         Kb.Rows rows = Kb.rows();
         if (groups.stream().anyMatch(g -> !g.prepared())) {
-            rows.add(btn("✅ Составить все", "ev:go:" + date));
+            rows.add(btn("✅ Составить все", "ev:go:" + date), btn("🎯 Выбрать", "ev:pk:d:" + date));
         }
         rows.add(btn("✏️ Изменить урок", "ev:edit:" + date), btn("⏭ Урок не состоялся", "ev:skip:" + date));
         rows.add(btn("Не сегодня", "ev:no"));
@@ -190,7 +190,10 @@ public class EveningFlow {
                 + "составлен. «Нет урока по КТП» значит, что в расписании урок есть, а в КТП на эту дату нет.");
         long todo = rows.stream().filter(s -> !s.slotDate.isBefore(today) && !KtpSlot.PREPARED.equals(s.status))
                 .map(s -> s.slotDate + "#" + s.lessonId).distinct().count();
-        if (todo > 0) nav.add(btn("✅ Составить планы недели (" + todo + ")", "ev:wgo:" + offset));
+        if (todo > 0) {
+            nav.add(btn("✅ Составить планы недели (" + todo + ")", "ev:wgo:" + offset),
+                    btn("🎯 Выбрать уроки", "ev:pk:w" + offset));
+        }
         if (!lessons.isEmpty()) nav.add(btn("✏️ Изменить урок (темы, цели, страницы)", "ev:wed:" + offset));
         nav.add(btn("📅 Предложение на ближайший день", "ev:next"));
         bot.send(chat, Kb.trunc(sb.toString(), 3900), nav.build());
@@ -218,6 +221,15 @@ public class EveningFlow {
             case "no" -> bot.edit(chat, msgId, "Хорошо, напомню завтра вечером. Планы можно составить в /plan.", null);
             case "next" -> tomorrow(uid, chat);
             case "wk" -> week(uid, chat, "1".equals(p[2]) ? 1 : 0);
+            case "pk" -> pick(uid, chat, msgId, p[2], p.length > 3 ? p[3] : null, null);
+            case "one" -> {
+                LocalDate date = LocalDate.parse(p[3]);
+                long lessonId = Long.parseLong(p[4]);
+                for (Group g : groups(uid, date)) {
+                    if (g.lesson().id == lessonId && !g.prepared()) generate(uid, chat, g, date, true);
+                }
+                pick(uid, chat, msgId, p[2], "d".equals(p[2]) ? p[3] : null, null);
+            }
             case "wed" -> {
                 LocalDate today = time.today();
                 LocalDate monday = today.minusDays(today.getDayOfWeek().getValue() - 1).plusWeeks("1".equals(p[2]) ? 1 : 0);
@@ -279,6 +291,38 @@ public class EveningFlow {
             }
             default -> { }
         }
+    }
+
+    /** Selective list: each button starts the plan of one lesson; the list is redrawn without it. */
+    private void pick(long uid, long chat, long msgId, String scope, String dateArg, String unused) {
+        LocalDate today = time.today();
+        List<LocalDate> days = new ArrayList<>();
+        if ("d".equals(scope)) {
+            days.add(LocalDate.parse(dateArg));
+        } else {
+            LocalDate monday = today.minusDays(today.getDayOfWeek().getValue() - 1)
+                    .plusWeeks("w1".equals(scope) ? 1 : 0);
+            for (int i = 0; i < 7; i++) {
+                if (!monday.plusDays(i).isBefore(today)) days.add(monday.plusDays(i));
+            }
+        }
+        long now = System.currentTimeMillis();
+        Kb.Rows rows = Kb.rows();
+        int n = 0;
+        for (LocalDate d : days) {
+            for (Group g : groups(uid, d)) {
+                if (g.prepared() || g.slots().stream().anyMatch(s -> now - started.getOrDefault(s.id, 0L) < 180_000)) {
+                    continue;
+                }
+                n++;
+                rows.add(btn(Kb.trunc(Dates.dayShort(Dates.weekday(d)) + " " + d.format(Dates.SHORT) + " · "
+                        + labels(g) + " · " + g.lesson().title(), 58), "ev:one:" + scope + ":" + d + ":" + g.lesson().id));
+            }
+        }
+        String text = n == 0 ? "Все планы составлены или уже составляются. Файлы придут отдельными сообщениями."
+                : "Нажмите на урок, чтобы составить его план (осталось: " + n + ").";
+        if (msgId > 0) bot.edit(chat, msgId, text, rows.build());
+        else bot.send(chat, text, rows.build());
     }
 
     private void act(long uid, long chat, Group g, LocalDate date, boolean edit) {
