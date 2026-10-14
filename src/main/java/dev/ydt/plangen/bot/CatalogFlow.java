@@ -222,7 +222,7 @@ public class CatalogFlow {
         for (OkulykClient.Listed b : books) {
             n++;
             Book known = known(b);
-            sb.append("\n").append(n).append(". ").append(Kb.trunc(b.title(), 90));
+            sb.append("\n").append(n).append(". ").append(b.title());
             if (b.year() != null) sb.append(" · ").append(b.year());
             if (b.language() != null) sb.append(" · ").append(b.language());
             sb.append("\n    ").append(known == null ? "➕ нет в базе" : shortStatus(known));

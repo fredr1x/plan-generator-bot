@@ -209,7 +209,7 @@ public class KtpFlow {
         if (next != null) {
             KtpLesson l = KtpLesson.findById(next.lessonId);
             sb.append("\n    ближайший: ").append(next.slotDate.format(Dates.SHORT)).append(" · ")
-                    .append(l == null ? "?" : "№" + l.seq + " " + Kb.trunc(l.title(), 40));
+                    .append(l == null ? "?" : "№" + l.seq + " " + l.title());
         }
         // lessons that did not fit into their term have no slot
         long dated = KtpSlot.count("ktpId = ?1 and classId = ?2 and status <> 'skipped'", k.id, c.id);
@@ -475,7 +475,7 @@ public class KtpFlow {
         }
         List<UnitInfo> units = KtpService.units(p.lessons.stream().map(l -> l.unit).toList());
         StringBuilder sb = new StringBuilder("📘 КТП");
-        if (p.title != null) sb.append(": ").append(Kb.trunc(p.title, 120));
+        if (p.title != null) sb.append(": ").append(p.title);
         sb.append("\nКласс: ").append(d.grade).append(d.track == null ? "" : ", " + Book.trackLabel(d.track));
         if (p.schoolYear != null) sb.append(" · учебный год ").append(p.schoolYear);
         int perHour = p.lessons.stream().mapToInt(l -> Math.max(1, l.hours)).sum();

@@ -160,7 +160,7 @@ public class EveningFlow {
                 NonTeachingDay off = NonTeachingDay.visible(uid, day).stream()
                         .filter(n -> n.covers(day) && n.appliesTo(c.grade)).findFirst().orElse(null);
                 items.add(new Item(e.lessonNo, c.label(), off != null
-                        ? "выходной" + (off.title == null ? "" : ": " + Kb.trunc(off.title, 30))
+                        ? "выходной" + (off.title == null ? "" : ": " + off.title)
                         : "нет урока по КТП" + noKtpReason(c, day)));
             }
             for (var en : slots.entrySet()) { // a lesson of the KTP that is not in the timetable of that day
@@ -200,7 +200,7 @@ public class EveningFlow {
     }
 
     private static String slotLine(KtpSlot s, KtpLesson l) {
-        return (l == null ? "?" : Kb.trunc(l.title(), 45)) + (KtpSlot.PREPARED.equals(s.status) ? " ✅" : "");
+        return (l == null ? "?" : l.title()) + (KtpSlot.PREPARED.equals(s.status) ? " ✅" : "");
     }
 
     /** Why a timetable lesson has no KTP lesson that day. */
@@ -345,7 +345,7 @@ public class EveningFlow {
         }
         var built = slots.skip(uid, g.slots().stream().map(s -> s.id).toList());
         LOG.infof("[evening] user=%d skipped lesson #%d (%s) on %s", uid, g.lesson().seq, labels(g), date);
-        bot.send(chat, "⏭ Урок «" + Kb.trunc(g.lesson().topic, 60) + "» не состоялся: он и следующие сдвинуты на "
+        bot.send(chat, "⏭ Урок «" + g.lesson().topic + "» не состоялся: он и следующие сдвинуты на "
                 + "ближайшие свободные уроки.\n\n" + SlotService.describeAll(built), null);
     }
 
@@ -358,7 +358,7 @@ public class EveningFlow {
         if (!fresh) return false;
         Draft d = draftFor(g, date);
         if (d.objectives == null || d.objectives.isBlank()) {
-            bot.send(chat, "В КТП у урока «" + Kb.trunc(g.lesson().topic, 50) + "» нет целей обучения. Допишите их:",
+            bot.send(chat, "В КТП у урока «" + g.lesson().topic + "» нет целей обучения. Допишите их:",
                     null);
             plan.review(uid, chat, d);
             return false;
@@ -402,15 +402,15 @@ public class EveningFlow {
             if (sb.length() > 0) sb.append("\n\n");
             sb.append(g.numbers()).append(" урок · ").append(labels(g)).append(" — ");
             if (g.lesson().unitTitle != null && !g.lesson().unitTitle.isBlank()) {
-                sb.append(Kb.trunc(g.lesson().unitTitle, 40)).append(" · ");
+                sb.append(g.lesson().unitTitle).append(" · ");
             }
-            sb.append(Kb.trunc(g.lesson().title(), 70));
+            sb.append(g.lesson().title());
             if (!"lesson".equals(g.lesson().kind)) sb.append(" [").append(g.lesson().kind).append(']');
             if (g.prepared()) sb.append("\n    ✅ план уже готов");
             List<Draft.BookRef> refs = books.autoPick(g.lesson(), g.classes(), date);
             for (Draft.BookRef r : refs) {
                 Book b = r.bookId == null ? null : Book.findById(r.bookId);
-                if (b != null) sb.append("\n    📚 ").append(Kb.trunc(b.title, 40)).append(", стр. ").append(r.pages);
+                if (b != null) sb.append("\n    📚 ").append(b.title).append(", стр. ").append(r.pages);
             }
             if (refs.isEmpty()) sb.append("\n    📚 книга: страницы не найдены, план без учебника");
         }

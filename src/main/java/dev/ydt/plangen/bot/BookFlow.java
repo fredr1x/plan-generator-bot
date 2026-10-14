@@ -116,7 +116,7 @@ public class BookFlow {
         for (int i = 0; i < found.size(); i++) rows.add(btn(lb.get(i), "pl:pg:" + found.get(i).spec()));
         rows.add(btn("Без учебника", "pl:bk:none"));
         save(uid, PLAN_PAGES, d);
-        bot.send(chat, "Нашёл по теме «" + Kb.trunc(d.topic, 50) + "». Выберите страницы или напишите свои:" + Kb.legend(full),
+        bot.send(chat, "Нашёл по теме «" + d.topic + "». Выберите страницы или напишите свои:" + Kb.legend(full),
                 rows.build());
     }
 

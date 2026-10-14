@@ -486,9 +486,9 @@ public class PlanFlow {
                 + "Классы: " + labels(classes) + " (" + students + " уч.)\n"
                 + "Раздел: " + d.section + "\n"
                 + "Тема: " + d.topic + "\n"
-                + "Цели обучения:\n" + Kb.trunc(d.objectives, 700)
+                + "Цели обучения:\n" + d.objectives
                 + bookFlow.summaryLine(d)
-                + (d.notes.isBlank() ? "" : "\nПожелания: " + Kb.trunc(d.notes, 300));
+                + (d.notes.isBlank() ? "" : "\nПожелания: " + d.notes);
         saveToKtp(d);
         save(uid, PLAN_CONFIRM, d);
         Kb.Rows rows = Kb.rows().add(btn("✅ Составить план", "pl:go"));
@@ -542,8 +542,8 @@ public class PlanFlow {
         Teacher t = Teacher.findById(uid);
         List<SchoolClass> classes = classes(uid, d);
         LOG.infof("[plan] user=%d confirmed: date=%s classes=\"%s\" topic=\"%s\"", uid, d.date, labels(classes),
-                Kb.trunc(d.topic, 60));
-        Long placeholder = bot.send(chat, "⏳ Составляю план «" + Kb.trunc(d.topic, 50)
+                d.topic);
+        Long placeholder = bot.send(chat, "⏳ Составляю план «" + d.topic
                 + "». Обычно это занимает 20–60 секунд…", null);
         String notes = LessonKinds.withKindNote(d.notes, d.ktpLessonId, d.summative);
         Job job = new Job(uid, chat, placeholder, LocalDate.parse(d.date), t.subject, t.lang, minutesOf(d, t),
@@ -623,7 +623,7 @@ public class PlanFlow {
         d.books = bookFlow.fromJson(r.bookRefs);
         d.bookAsked = true; // the same lesson keeps the same book pages
         save(uid, PLAN_DAY, d);
-        askDay(chat, "Тот же урок «" + Kb.trunc(r.topic, 60) + "». На какой день?", "pl:d:");
+        askDay(chat, "Тот же урок «" + r.topic + "». На какой день?", "pl:d:");
     }
 
     /** Same content for other classes or another date, no model call. */
