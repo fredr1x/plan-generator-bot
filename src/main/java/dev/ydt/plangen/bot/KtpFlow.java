@@ -764,12 +764,11 @@ public class KtpFlow {
                 if (k == null) return;
                 List<KtpLesson> lessons = KtpLesson.ofKtp(k.id);
                 List<UnitInfo> units = KtpService.units(lessons.stream().map(l -> l.unitTitle).toList());
+                List<String> full = units.stream().map(u -> u.title() + " (" + u.count() + ")").toList();
+                List<String> lb = Kb.labels(full);
                 Kb.Rows rows = Kb.rows();
-                for (int i = 0; i < units.size(); i++) {
-                    rows.add(btn(Kb.trunc(units.get(i).title() + " (" + units.get(i).count() + ")", 55),
-                            "ktp:u:" + k.id + ":" + i));
-                }
-                bot.send(chat, unitsText(units, lessons.size()), rows.build());
+                for (int i = 0; i < units.size(); i++) rows.add(btn(lb.get(i), "ktp:u:" + k.id + ":" + i));
+                bot.send(chat, unitsText(units, lessons.size()) + Kb.legend(full), rows.build());
             }
             case "u" -> {
                 bot.answer(cbId, null);
@@ -852,13 +851,12 @@ public class KtpFlow {
     private void sendUnits(long chat, Ktp k, Long editMsg) {
         List<KtpLesson> lessons = KtpLesson.ofKtp(k.id);
         List<UnitInfo> units = KtpService.units(lessons.stream().map(l -> l.unitTitle).toList());
+        List<String> full = units.stream().map(u -> u.title() + " (" + u.count() + ")").toList();
+        List<String> lb = Kb.labels(full);
         Kb.Rows rows = Kb.rows();
-        for (int i = 0; i < units.size(); i++) {
-            rows.add(btn(Kb.trunc(units.get(i).title() + " (" + units.get(i).count() + ")", 55),
-                    "pl:ku:" + k.id + ":" + i));
-        }
+        for (int i = 0; i < units.size(); i++) rows.add(btn(lb.get(i), "pl:ku:" + k.id + ":" + i));
         rows.add(btn("Ввести вручную", "pl:kn"));
-        String text = "📘 Взять урок из КТП (" + k.gradeLabel() + ")? Выберите юнит:";
+        String text = "📘 Взять урок из КТП (" + k.gradeLabel() + ")? Выберите юнит:" + Kb.legend(full);
         if (editMsg != null) bot.edit(chat, editMsg, text, rows.build());
         else bot.send(chat, text, rows.build());
     }
@@ -871,14 +869,14 @@ public class KtpFlow {
         List<UnitInfo> units = KtpService.units(lessons.stream().map(l -> l.unitTitle).toList());
         if (unitIdx < 0 || unitIdx >= units.size()) return;
         UnitInfo u = units.get(unitIdx);
+        List<KtpLesson> inUnit = lessons.stream().filter(l -> l.seq >= u.firstSeq() && l.seq <= u.lastSeq()).toList();
+        List<String> full = inUnit.stream()
+                .map(l -> l.seq + ". " + l.title() + ("lesson".equals(l.kind) ? "" : " [" + l.kind + "]")).toList();
+        List<String> lb = Kb.labels(full);
         Kb.Rows rows = Kb.rows();
-        for (KtpLesson l : lessons) {
-            if (l.seq < u.firstSeq() || l.seq > u.lastSeq()) continue;
-            rows.add(btn(Kb.trunc(l.seq + ". " + l.title() + ("lesson".equals(l.kind) ? "" : " [" + l.kind + "]"), 58),
-                    "pl:kl:" + l.id));
-        }
+        for (int i = 0; i < inUnit.size(); i++) rows.add(btn(lb.get(i), "pl:kl:" + inUnit.get(i).id));
         rows.add(btn("← Юниты", "pl:kb:" + k.id), btn("Ввести вручную", "pl:kn"));
-        bot.edit(chat, msgId, "📘 " + u.title() + "\nВыберите урок:", rows.build());
+        bot.edit(chat, msgId, "📘 " + u.title() + "\nВыберите урок:" + Kb.legend(full), rows.build());
     }
 
     void onBackToUnits(long chat, long msgId, long ktpId) {

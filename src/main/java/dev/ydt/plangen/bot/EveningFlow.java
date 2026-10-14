@@ -233,15 +233,21 @@ public class EveningFlow {
             case "wed" -> {
                 LocalDate today = time.today();
                 LocalDate monday = today.minusDays(today.getDayOfWeek().getValue() - 1).plusWeeks("1".equals(p[2]) ? 1 : 0);
-                Kb.Rows rows = Kb.rows();
+                List<String> full = new ArrayList<>();
+                List<String> data = new ArrayList<>();
                 for (LocalDate d = monday; !d.isAfter(monday.plusDays(6)); d = d.plusDays(1)) {
                     if (d.isBefore(today)) continue;
                     for (Group g : groups(uid, d)) {
-                        rows.add(btn(Kb.trunc(Dates.dayShort(Dates.weekday(d)) + " " + d.format(Dates.SHORT) + " · "
-                                + labels(g) + " · " + g.lesson().title(), 58), "ev:e:" + d + ":" + g.lesson().id));
+                        full.add(Dates.dayShort(Dates.weekday(d)) + " " + d.format(Dates.SHORT) + " · " + labels(g)
+                                + " · " + g.lesson().title());
+                        data.add("ev:e:" + d + ":" + g.lesson().id);
                     }
                 }
-                bot.send(chat, "Какой урок изменить? Откроется экран с темой, целями и страницами книги.", rows.build());
+                Kb.Rows rows = Kb.rows();
+                List<String> lb = Kb.labels(full);
+                for (int i = 0; i < data.size(); i++) rows.add(btn(lb.get(i), data.get(i)));
+                bot.send(chat, "Какой урок изменить? Откроется экран с темой, целями и страницами книги."
+                        + Kb.legend(full), rows.build());
             }
             case "wgo" -> {
                 LocalDate today = time.today();
@@ -272,12 +278,15 @@ public class EveningFlow {
                     act(uid, chat, groups.get(0), date, edit);
                     return;
                 }
+                List<String> full = groups.stream()
+                        .map(g -> g.numbers() + " ур. · " + labels(g) + " · " + g.lesson().title()).toList();
+                List<String> lb = Kb.labels(full);
                 Kb.Rows rows = Kb.rows();
-                for (Group g : groups) {
-                    rows.add(btn(Kb.trunc(g.numbers() + " ур. · " + labels(g) + " · " + g.lesson().title(), 58),
-                            "ev:" + (edit ? "e:" : "s:") + date + ":" + g.lesson().id));
+                for (int i = 0; i < groups.size(); i++) {
+                    rows.add(btn(lb.get(i), "ev:" + (edit ? "e:" : "s:") + date + ":" + groups.get(i).lesson().id));
                 }
-                bot.send(chat, edit ? "Какой урок изменить?" : "Какой урок не состоялся?", rows.build());
+                bot.send(chat, (edit ? "Какой урок изменить?" : "Какой урок не состоялся?") + Kb.legend(full),
+                        rows.build());
             }
             case "e", "s" -> {
                 LocalDate date = LocalDate.parse(p[2]);
@@ -307,20 +316,24 @@ public class EveningFlow {
             }
         }
         long now = System.currentTimeMillis();
-        Kb.Rows rows = Kb.rows();
-        int n = 0;
+        List<String> full = new ArrayList<>();
+        List<String> data = new ArrayList<>();
         for (LocalDate d : days) {
             for (Group g : groups(uid, d)) {
                 if (g.prepared() || g.slots().stream().anyMatch(s -> now - started.getOrDefault(s.id, 0L) < 180_000)) {
                     continue;
                 }
-                n++;
-                rows.add(btn(Kb.trunc(Dates.dayShort(Dates.weekday(d)) + " " + d.format(Dates.SHORT) + " · "
-                        + labels(g) + " · " + g.lesson().title(), 58), "ev:one:" + scope + ":" + d + ":" + g.lesson().id));
+                full.add(Dates.dayShort(Dates.weekday(d)) + " " + d.format(Dates.SHORT) + " · " + labels(g) + " · "
+                        + g.lesson().title());
+                data.add("ev:one:" + scope + ":" + d + ":" + g.lesson().id);
             }
         }
+        Kb.Rows rows = Kb.rows();
+        List<String> lb = Kb.labels(full);
+        for (int i = 0; i < data.size(); i++) rows.add(btn(lb.get(i), data.get(i)));
+        int n = data.size();
         String text = n == 0 ? "Все планы составлены или уже составляются. Файлы придут отдельными сообщениями."
-                : "Нажмите на урок, чтобы составить его план (осталось: " + n + ").";
+                : "Нажмите на урок, чтобы составить его план (осталось: " + n + ")." + Kb.legend(full);
         if (msgId > 0) bot.edit(chat, msgId, text, rows.build());
         else bot.send(chat, text, rows.build());
     }

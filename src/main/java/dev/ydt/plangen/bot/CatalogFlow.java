@@ -450,18 +450,20 @@ public class CatalogFlow {
 
     private String classScreenText(SchoolClass c) {
         return "📚 Книги для " + c.label() + (c.track == null ? "" : " (" + Book.trackLabel(c.track) + ")")
-                + "\nОтметьте, по каким книгам вы ведёте этот класс. В /plan я сначала предложу их.";
+                + "\nОтметьте, по каким книгам вы ведёте этот класс. В /plan я сначала предложу их."
+                + Kb.legend(bookLines(c, Book.fittingClass(c.grade, c.track)));
+    }
+
+    private static List<String> bookLines(SchoolClass c, List<Book> books) {
+        return books.stream().map(b -> (ClassBook.find(c.id, b.id) != null ? "✅ " : "▫️ ") + b.title + " · "
+                + b.typeLabel() + (b.pubYear == null ? "" : " · " + b.pubYear) + (b.isLoaded() ? "" : " ⏳")).toList();
     }
 
     private dev.ydt.plangen.telegram.Dto.InlineKeyboard classScreen(SchoolClass c) {
         Kb.Rows rows = Kb.rows();
         List<Book> fitting = Book.fittingClass(c.grade, c.track);
-        for (Book b : fitting) {
-            boolean linked = ClassBook.find(c.id, b.id) != null;
-            rows.add(btn(Kb.trunc((linked ? "✅ " : "▫️ ") + b.title + " · " + b.typeLabel()
-                    + (b.pubYear == null ? "" : " · " + b.pubYear) + (b.isLoaded() ? "" : " ⏳"), 60),
-                    "cat:tog:" + c.id + ":" + b.id));
-        }
+        List<String> lb = Kb.labels(bookLines(c, fitting));
+        for (int i = 0; i < fitting.size(); i++) rows.add(btn(lb.get(i), "cat:tog:" + c.id + ":" + fitting.get(i).id));
         if (fitting.isEmpty()) {
             rows.add(btn("Для этого класса книг нет, добавить", "cat:add"));
         }

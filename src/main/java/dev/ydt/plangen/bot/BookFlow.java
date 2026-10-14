@@ -109,14 +109,14 @@ public class BookFlow {
                     null);
             return;
         }
+        List<String> full = found.stream()
+                .map(s -> "стр. " + s.spec() + (s.label().isBlank() ? "" : " · " + s.label())).toList();
+        List<String> lb = Kb.labels(full);
         Kb.Rows rows = Kb.rows();
-        for (BookService.Suggestion s : found) {
-            rows.add(btn(Kb.trunc("стр. " + s.spec() + (s.label().isBlank() ? "" : " · " + s.label()), 60),
-                    "pl:pg:" + s.spec()));
-        }
+        for (int i = 0; i < found.size(); i++) rows.add(btn(lb.get(i), "pl:pg:" + found.get(i).spec()));
         rows.add(btn("Без учебника", "pl:bk:none"));
         save(uid, PLAN_PAGES, d);
-        bot.send(chat, "Нашёл по теме «" + Kb.trunc(d.topic, 50) + "». Выберите страницы или напишите свои:",
+        bot.send(chat, "Нашёл по теме «" + Kb.trunc(d.topic, 50) + "». Выберите страницы или напишите свои:" + Kb.legend(full),
                 rows.build());
     }
 
@@ -301,14 +301,13 @@ public class BookFlow {
     }
 
     private void askBook(long uid, long chat, Draft d, List<Book> list, String question) {
+        List<String> full = list.stream().map(b -> b.title + " · " + b.typeLabel() + " · " + b.quartersLabel()).toList();
+        List<String> lb = Kb.labels(full);
         Kb.Rows rows = Kb.rows();
-        for (Book b : list) {
-            rows.add(btn(Kb.trunc(b.title + " · " + b.typeLabel() + " · " + b.quartersLabel(), 58),
-                    "pl:bk:" + b.id));
-        }
+        for (int i = 0; i < list.size(); i++) rows.add(btn(lb.get(i), "pl:bk:" + list.get(i).id));
         rows.add(btn(d.books.isEmpty() ? "Без учебника" : "Дальше →", d.books.isEmpty() ? "pl:bk:none" : "pl:bk:done"));
         save(uid, PLAN_BOOK, d);
-        bot.send(chat, question, rows.build());
+        bot.send(chat, question + Kb.legend(full), rows.build());
     }
 
     private void askPages(long uid, long chat, Draft d, Book b) {

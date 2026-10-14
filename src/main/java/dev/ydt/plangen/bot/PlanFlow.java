@@ -135,12 +135,12 @@ public class PlanFlow {
             bot.send(chat, "Пока нет составленных планов. Начните с /plan", null);
             return;
         }
+        List<String> full = list.stream()
+                .map(r -> r.planDate.format(Dates.SHORT) + " · " + r.classes + " · " + r.topic).toList();
+        List<String> lb = Kb.labels(full);
         Kb.Rows rows = Kb.rows();
-        for (LessonPlanRecord r : list) {
-            String label = r.planDate.format(Dates.SHORT) + " · " + r.classes + " · " + Kb.trunc(r.topic, 30);
-            rows.add(btn(label, "pl:send:" + r.id));
-        }
-        bot.send(chat, "Последние планы. Нажмите, чтобы получить файл ещё раз:", rows.build());
+        for (int i = 0; i < list.size(); i++) rows.add(btn(lb.get(i), "pl:send:" + list.get(i).id));
+        bot.send(chat, "Последние планы. Нажмите, чтобы получить файл ещё раз:" + Kb.legend(full), rows.build());
     }
 
     public void onText(long uid, long chat, ConvState st, String text) {
