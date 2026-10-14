@@ -61,6 +61,9 @@ public class PlanFlow {
     static final String PLAN_DATE_EDIT = "PLAN_DATE_EDIT";
     static final String PLAN_KTP = "PLAN_KTP";
 
+    private static final int SUMMATIVE_MINUTES = 20;
+    private static final int[] LESSON_MINUTES = {20, 25, 30, 35, 40, 45, 50};
+
     // Notes go to the model, so they are in English (cheaper tokens).
     private static final String REDO_NOTE =
             "Offer a different version: other tasks, examples and techniques, do not repeat the previous "
@@ -81,7 +84,7 @@ public class PlanFlow {
                        int minutes, String school, String teacher, String classes, int students,
                        String section, String topic, String objectives, String notes, String previousJson,
                        String bookRefs, String bookContext, List<BookService.Answer> bookAnswers,
-                       String classCounts, Long ktpLessonId, List<Long> slotIds) {}
+                       String classCounts, Long ktpLessonId, List<Long> slotIds, boolean summative) {}
 
     @Inject
     Messenger bot;
@@ -285,6 +288,28 @@ public class PlanFlow {
                 bot.answer(cbId, null);
                 copyPlan(uid, chat, d);
             }
+            case "mn" -> {
+                bot.answer(cbId, null);
+                if (d.summative) {
+                    bot.send(chat, "БЖБ идёт 20 минут. Чтобы выбрать другое время, выключите БЖБ.", null);
+                    return;
+                }
+                Kb.Rows rows = Kb.rows();
+                List<dev.ydt.plangen.telegram.Dto.InlineButton> line = new ArrayList<>();
+                for (int m : LESSON_MINUTES) line.add(btn(m + " мин", "pl:min:" + m));
+                rows.add(line);
+                bot.send(chat, "Сколько минут длится урок?", rows.build());
+            }
+            case "min" -> {
+                bot.answer(cbId, null);
+                d.minutes = Integer.parseInt(p[2]);
+                confirm(uid, chat, d);
+            }
+            case "bzb" -> {
+                bot.answer(cbId, null);
+                d.summative = !d.summative;
+                confirm(uid, chat, d);
+            }
             case "ku" -> {
                 bot.answer(cbId, null);
                 ktpFlow.onPickUnit(chat, msgId, Long.parseLong(p[2]), Integer.parseInt(p[3]));
@@ -454,8 +479,10 @@ public class PlanFlow {
         List<SchoolClass> classes = classes(uid, d);
         int students = classes.stream().mapToInt(c -> c.studentCount).sum();
         LocalDate date = LocalDate.parse(d.date);
+        int minutes = minutesOf(d, Teacher.findById(uid));
         String text = "📝 Проверьте данные:\n"
                 + "Дата: " + date.format(Dates.FULL) + " (" + Dates.dayShort(Dates.weekday(date)) + ")\n"
+                + "Время урока: " + minutes + " мин" + (d.summative ? " (БЖБ)" : "") + "\n"
                 + "Классы: " + labels(classes) + " (" + students + " уч.)\n"
                 + "Раздел: " + d.section + "\n"
                 + "Тема: " + d.topic + "\n"
@@ -473,6 +500,8 @@ public class PlanFlow {
             rows.add(btn(Kb.trunc("📖 Из книги: " + (fromBook.section().isBlank() ? "" : fromBook.section() + " · ")
                     + fromBook.topic(), 60), "pl:frombook"));
         }
+        rows.add(btn("⏱ Время: " + minutes + " мин", "pl:mn"),
+                btn(d.summative ? "📝 БЖБ: да ✅" : "📝 БЖБ: нет", "pl:bzb"));
         rows.add(btn("✏️ Дата", "pl:edit:date"), btn("✏️ Классы", "pl:edit:classes"))
                 .add(btn("✏️ Раздел", "pl:edit:section"), btn("✏️ Тема", "pl:edit:topic"),
                         btn("✏️ Цели", "pl:edit:objectives"))
@@ -516,13 +545,31 @@ public class PlanFlow {
                 Kb.trunc(d.topic, 60));
         Long placeholder = bot.send(chat, "⏳ Составляю план «" + Kb.trunc(d.topic, 50)
                 + "». Обычно это занимает 20–60 секунд…", null);
-        String notes = LessonKinds.withKindNote(d.notes, d.ktpLessonId);
-        Job job = new Job(uid, chat, placeholder, LocalDate.parse(d.date), t.subject, t.lang, t.lessonMinutes,
+        String notes = LessonKinds.withKindNote(d.notes, d.ktpLessonId, d.summative);
+        Job job = new Job(uid, chat, placeholder, LocalDate.parse(d.date), t.subject, t.lang, minutesOf(d, t),
                 t.school, t.fullName, labels(classes), classes.stream().mapToInt(c -> c.studentCount).sum(),
                 d.section, d.topic, d.objectives, notes, null, bookFlow.toJson(d.books),
                 bookFlow.contextFor(d.books), bookFlow.answersFor(d.books), countsOf(classes), d.ktpLessonId,
-                slotIds);
+                slotIds, d.summative);
         exec.submit(() -> run(job));
+    }
+
+    /** Lesson length: 20 minutes for the summative assessment, else the one chosen for this plan or the profile's. */
+    private static int minutesOf(Draft d, Teacher t) {
+        if (d.summative) return SUMMATIVE_MINUTES;
+        return d.minutes != null ? d.minutes : t.lessonMinutes;
+    }
+
+    /** The length of a stored plan is the sum of its stages. */
+    private int minutesOf(LessonPlanRecord r, Teacher t) {
+        try {
+            int sum = mapper.readValue(r.contentJson, LessonContent.class).stages().stream()
+                    .mapToInt(LessonContent.Stage::minutes).sum();
+            if (sum > 0) return sum;
+        } catch (IOException | RuntimeException e) {
+            LOG.warnf("plan #%d: cannot read the length from the content: %s", r.id, e.getMessage());
+        }
+        return r.summative ? SUMMATIVE_MINUTES : t.lessonMinutes;
     }
 
     /** Shows the check screen for a draft that was filled in by the program (evening suggestions). */
@@ -553,10 +600,10 @@ public class PlanFlow {
         LOG.infof("[revision] user=%d plan #%d: %s", uid, recordId,
                 !editPrevious ? "another variant" : note == SHORTER_NOTE ? "shorter" : "more tasks");
         Long placeholder = bot.send(chat, progress, null);
-        Job job = new Job(uid, chat, placeholder, r.planDate, t.subject, t.lang, t.lessonMinutes, t.school,
+        Job job = new Job(uid, chat, placeholder, r.planDate, t.subject, t.lang, minutesOf(r, t), t.school,
                 t.fullName, r.classes, r.students, r.section, r.topic, r.objectives, note,
                 editPrevious ? r.contentJson : null, r.bookRefs, bookFlow.contextFor(bookFlow.fromJson(r.bookRefs)),
-                bookFlow.answersFor(bookFlow.fromJson(r.bookRefs)), countsFor(r), null, List.of());
+                bookFlow.answersFor(bookFlow.fromJson(r.bookRefs)), countsFor(r), null, List.of(), r.summative);
         exec.submit(() -> run(job));
     }
 
@@ -599,6 +646,7 @@ public class PlanFlow {
         r.contentJson = src.contentJson;
         r.bookRefs = src.bookRefs;
         r.classCounts = countsOf(classes);
+        r.summative = src.summative;
         r.model = "copy";
         r.persist();
         LOG.infof("[copy] user=%d plan #%d copied to #%d for \"%s\" on %s (no model call)", uid, src.id, r.id,
@@ -675,6 +723,7 @@ public class PlanFlow {
                 r.model = plans.model();
                 r.bookRefs = job.bookRefs();
                 r.classCounts = job.classCounts();
+                r.summative = job.summative();
                 r.tokensIn = g.tokensIn();
                 r.tokensOut = g.tokensOut();
                 r.attempts = g.attempts();

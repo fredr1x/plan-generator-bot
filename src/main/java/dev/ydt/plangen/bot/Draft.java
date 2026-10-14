@@ -20,6 +20,10 @@ public class Draft {
     public Long ktpLessonId;
     /** Textbook step: asked once; the lists stay empty when the teacher skipped it. */
     public boolean bookAsked;
+    /** Lesson length chosen for this plan; null = the teacher's default from the profile. */
+    public Integer minutes;
+    /** Unit summative assessment (BZhB): the lesson is 20 minutes and the plan is built around the written task. */
+    public boolean summative;
     /** Books with their pages, in the order they were added (student's book first, workbook after it). */
     public List<BookRef> books = new ArrayList<>();
     /** The book whose pages are being asked right now. */

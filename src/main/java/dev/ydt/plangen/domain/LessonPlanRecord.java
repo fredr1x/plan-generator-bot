@@ -56,6 +56,9 @@ public class LessonPlanRecord extends PanacheEntityBase {
 
     public int attempts = 1;
 
+    /** A 20-minute lesson for the unit summative assessment (BZhB). */
+    public boolean summative;
+
     public int millis;
 
     @Column(name = "created_at")

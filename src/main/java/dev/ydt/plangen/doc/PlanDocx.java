@@ -202,7 +202,8 @@ public final class PlanDocx {
             String name = stages.size() == STAGE_NAMES.length ? STAGE_NAMES[i] : (s.name() == null ? "" : s.name());
             text(row.getCell(0), name + " " + s.minutes() + " min", false);
             text(row.getCell(1), s.teacherActions(), false);
-            text(row.getCell(2), s.studentActions(), false);
+            text(row.getCell(2), i == stages.size() - 1 ? s.studentActions() + "\n" + l.scale()
+                    : s.studentActions(), false);
             text(row.getCell(3), s.assessment(), false);
             text(row.getCell(4), s.resources(), false);
         }

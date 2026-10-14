@@ -22,7 +22,8 @@ public record Labels(
         String studentActions,
         String assessment,
         String resources,
-        String minutes) {
+        String minutes,
+        String scale) {
 
     public static Labels of(String lang) {
         return switch (lang == null ? "en" : lang) {
@@ -44,7 +45,8 @@ public record Labels(
             "Learners will be able to:",
             "Lesson procedure",
             "Lesson stage / Time", "Teacher's actions", "Students' actions", "Assessment", "Resources",
-            "min");
+            "min",
+            "Total: 10 points\n9-10 points \u2013 \u201c5\u201d\n7-8 points \u2013 \u201c4\u201d\n5-6 points \u2013 \u201c3\u201d");
 
     private static final Labels RU = new Labels(
             "Краткосрочный (поурочный) план",
@@ -58,7 +60,8 @@ public record Labels(
             "Учащиеся смогут:",
             "Ход урока",
             "Этап урока / Время", "Действия педагога", "Действия ученика", "Оценивание", "Ресурсы",
-            "мин");
+            "мин",
+            "Всего: 10 баллов\n9-10 баллов \u2013 \u00ab5\u00bb\n7-8 баллов \u2013 \u00ab4\u00bb\n5-6 баллов \u2013 \u00ab3\u00bb");
 
     private static final Labels KK = new Labels(
             "Қысқа мерзімді (сабақ) жоспар",
@@ -72,5 +75,6 @@ public record Labels(
             "Оқушылар орындай алады:",
             "Сабақтың барысы",
             "Сабақ кезеңі / Уақыты", "Педагогтің әрекеті", "Оқушының әрекеті", "Бағалау", "Ресурстар",
-            "мин");
+            "мин",
+            "Барлығы: 10 балл\n9-10 балл \u2013 \u00ab5\u00bb\n7-8 балл \u2013 \u00ab4\u00bb\n5-6 балл \u2013 \u00ab3\u00bb");
 }
