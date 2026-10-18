@@ -509,7 +509,7 @@ public class PlanFlow {
                 + "Раздел: " + d.section + "\n"
                 + "Тема: " + d.topic + "\n"
                 + "Цели обучения:\n" + d.objectives
-                + bookFlow.summaryLine(d)
+                + (d.termTest ? "" : bookFlow.summaryLine(d))
                 + (d.notes.isBlank() ? "" : "\nПожелания: " + d.notes)
                 + (!d.termTest ? "" : blank(d.testText) ? "\nЗадания ТЖБ: ещё не присланы"
                 : "\nЗадания ТЖБ: получены (" + d.testText.length() + " симв.)");
@@ -519,7 +519,7 @@ public class PlanFlow {
         if (d.sourcePlanId != null) {
             rows.add(btn("♻️ Тот же план без ИИ (бесплатно)", "pl:copy"));
         }
-        BookService.Heading fromBook = bookFlow.proposal(d);
+        BookService.Heading fromBook = d.termTest ? null : bookFlow.proposal(d);
         if (fromBook != null) {
             rows.add(btn(Kb.trunc("📖 Из книги: " + (fromBook.section().isBlank() ? "" : fromBook.section() + " · ")
                     + fromBook.topic(), 60), "pl:frombook"));
@@ -533,7 +533,8 @@ public class PlanFlow {
         rows.add(btn("✏️ Дата", "pl:edit:date"), btn("✏️ Классы", "pl:edit:classes"))
                 .add(btn("✏️ Раздел", "pl:edit:section"), btn("✏️ Тема", "pl:edit:topic"),
                         btn("✏️ Цели", "pl:edit:objectives"))
-                .add(btn("✏️ Пожелания", "pl:edit:notes"), btn("📚 Учебник", "pl:edit:book"));
+                .add(d.termTest ? List.of(btn("✏️ Пожелания", "pl:edit:notes"))
+                        : List.of(btn("✏️ Пожелания", "pl:edit:notes"), btn("📚 Учебник", "pl:edit:book")));
         if (ktpFlow.hasKtp(classes)) {
             rows.add(btn("📘 Другой урок из КТП", "pl:edit:ktp"));
         }
@@ -581,10 +582,15 @@ public class PlanFlow {
         String notes = LessonKinds.withKindNote(d.notes, d.ktpLessonId, d.summative);
         Job job = new Job(uid, chat, placeholder, LocalDate.parse(d.date), t.subject, t.lang, minutesOf(d, t),
                 t.school, t.fullName, labels(classes), classes.stream().mapToInt(c -> c.studentCount).sum(),
-                d.section, d.topic, d.objectives, notes, null, bookFlow.toJson(d.books),
-                bookFlow.contextFor(d.books), bookFlow.answersFor(d.books), countsOf(classes), d.ktpLessonId,
+                d.section, d.topic, d.objectives, notes, null, bookFlow.toJson(booksOf(d)),
+                bookFlow.contextFor(booksOf(d)), bookFlow.answersFor(booksOf(d)), countsOf(classes), d.ktpLessonId,
                 slotIds, d.summative, d.termTest, d.testText);
         exec.submit(() -> run(job));
+    }
+
+    /** The term test uses no coursebook. */
+    private static List<Draft.BookRef> booksOf(Draft d) {
+        return d.termTest ? List.of() : d.books;
     }
 
     private void askTest(long uid, long chat, Draft d) {

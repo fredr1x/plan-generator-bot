@@ -414,6 +414,7 @@ public class EveningFlow {
             sb.append(g.lesson().title());
             if (!"lesson".equals(g.lesson().kind)) sb.append(" [").append(g.lesson().kind).append(']');
             if (g.prepared()) sb.append("\n    ✅ план уже готов");
+            if ("interim".equals(g.lesson().kind)) continue; // the term test uses no coursebook
             List<Draft.BookRef> refs = books.autoPick(g.lesson(), g.classes(), date);
             for (Draft.BookRef r : refs) {
                 Book b = r.bookId == null ? null : Book.findById(r.bookId);
