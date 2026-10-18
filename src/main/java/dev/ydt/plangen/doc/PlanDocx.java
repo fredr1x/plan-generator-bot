@@ -38,7 +38,7 @@ public final class PlanDocx {
      */
     public record Data(String lang, String school, String teacher, LocalDate date, String classes,
                        int students, String section, String topic, String objectives,
-                       LessonContent content, String classCounts) {}
+                       LessonContent content, String classCounts, boolean termTest) {}
 
     private static final String FONT = "Times New Roman";
     private static final int SIZE = 11;
@@ -67,7 +67,7 @@ public final class PlanDocx {
             progress.setSpacingAfter(60);
             run(progress, l.progress(), true, SIZE);
 
-            stages(doc, l, d.content().stages());
+            stages(doc, l, d.content().stages(), d.termTest());
             doc.write(out);
         }
     }
@@ -184,7 +184,7 @@ public final class PlanDocx {
 
     // ---------- lesson procedure ----------
 
-    private static void stages(XWPFDocument doc, Labels l, List<Stage> stageList) {
+    private static void stages(XWPFDocument doc, Labels l, List<Stage> stageList, boolean termTest) {
         List<Stage> stages = stageList == null ? List.of() : stageList;
         XWPFTable t = table(doc, stages.size() + 1, STAGE_COLS);
         String[] heads = {l.stage(), l.teacherActions(), l.studentActions(), l.assessment(), l.resources()};
@@ -202,7 +202,7 @@ public final class PlanDocx {
             String name = stages.size() == STAGE_NAMES.length ? STAGE_NAMES[i] : (s.name() == null ? "" : s.name());
             text(row.getCell(0), name + " " + s.minutes() + " min", false);
             text(row.getCell(1), s.teacherActions(), false);
-            text(row.getCell(2), i == stages.size() - 1 ? s.studentActions() + "\n" + l.scale()
+            text(row.getCell(2), i == stages.size() - 1 && !termTest ? s.studentActions() + "\n" + l.scale()
                     : s.studentActions(), false);
             text(row.getCell(3), s.assessment(), false);
             text(row.getCell(4), s.resources(), false);

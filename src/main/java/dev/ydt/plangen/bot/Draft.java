@@ -24,6 +24,9 @@ public class Draft {
     public Integer minutes;
     /** Unit summative assessment (BZhB): the lesson is 20 minutes and the plan is built around the written task. */
     public boolean summative;
+    /** Term summative assessment (TZhB / SOCh): 3 + 40 + 2 minutes, the tasks are sent by the teacher as text. */
+    public boolean termTest;
+    public String testText;
     /** Books with their pages, in the order they were added (student's book first, workbook after it). */
     public List<BookRef> books = new ArrayList<>();
     /** The book whose pages are being asked right now. */

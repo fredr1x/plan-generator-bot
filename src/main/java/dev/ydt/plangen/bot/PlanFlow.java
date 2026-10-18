@@ -60,8 +60,10 @@ public class PlanFlow {
 
     static final String PLAN_DATE_EDIT = "PLAN_DATE_EDIT";
     static final String PLAN_KTP = "PLAN_KTP";
+    static final String PLAN_TEST = "PLAN_TEST";
 
     private static final int SUMMATIVE_MINUTES = 20;
+    private static final int TERM_TEST_MINUTES = 45;
     private static final int[] LESSON_MINUTES = {20, 25, 30, 35, 40, 45, 50};
 
     // Notes go to the model, so they are in English (cheaper tokens).
@@ -84,7 +86,8 @@ public class PlanFlow {
                        int minutes, String school, String teacher, String classes, int students,
                        String section, String topic, String objectives, String notes, String previousJson,
                        String bookRefs, String bookContext, List<BookService.Answer> bookAnswers,
-                       String classCounts, Long ktpLessonId, List<Long> slotIds, boolean summative) {}
+                       String classCounts, Long ktpLessonId, List<Long> slotIds, boolean summative,
+                       boolean termTest, String testText) {}
 
     @Inject
     Messenger bot;
@@ -181,6 +184,10 @@ public class PlanFlow {
                     apply(d, kv);
                 }
                 askNext(uid, chat, d);
+            }
+            case PLAN_TEST -> {
+                d.testText = text.strip();
+                confirm(uid, chat, d);
             }
             case BookFlow.PLAN_PAGES -> {
                 if (bookFlow.onPages(uid, chat, d, classes(uid, d), LocalDate.parse(d.date), text)) {
@@ -308,7 +315,22 @@ public class PlanFlow {
             case "bzb" -> {
                 bot.answer(cbId, null);
                 d.summative = !d.summative;
+                if (d.summative) d.termTest = false;
                 confirm(uid, chat, d);
+            }
+            case "tzb" -> {
+                bot.answer(cbId, null);
+                d.termTest = !d.termTest;
+                if (d.termTest) {
+                    d.summative = false;
+                    askTest(uid, chat, d);
+                } else {
+                    confirm(uid, chat, d);
+                }
+            }
+            case "tt" -> {
+                bot.answer(cbId, null);
+                askTest(uid, chat, d);
             }
             case "ku" -> {
                 bot.answer(cbId, null);
@@ -482,13 +504,15 @@ public class PlanFlow {
         int minutes = minutesOf(d, Teacher.findById(uid));
         String text = "📝 Проверьте данные:\n"
                 + "Дата: " + date.format(Dates.FULL) + " (" + Dates.dayShort(Dates.weekday(date)) + ")\n"
-                + "Время урока: " + minutes + " мин" + (d.summative ? " (БЖБ)" : "") + "\n"
+                + "Время урока: " + minutes + " мин" + (d.summative ? " (БЖБ)" : d.termTest ? " (ТЖБ)" : "") + "\n"
                 + "Классы: " + labels(classes) + " (" + students + " уч.)\n"
                 + "Раздел: " + d.section + "\n"
                 + "Тема: " + d.topic + "\n"
                 + "Цели обучения:\n" + d.objectives
                 + bookFlow.summaryLine(d)
-                + (d.notes.isBlank() ? "" : "\nПожелания: " + d.notes);
+                + (d.notes.isBlank() ? "" : "\nПожелания: " + d.notes)
+                + (!d.termTest ? "" : blank(d.testText) ? "\nЗадания ТЖБ: ещё не присланы"
+                : "\nЗадания ТЖБ: получены (" + d.testText.length() + " симв.)");
         saveToKtp(d);
         save(uid, PLAN_CONFIRM, d);
         Kb.Rows rows = Kb.rows().add(btn("✅ Составить план", "pl:go"));
@@ -501,7 +525,11 @@ public class PlanFlow {
                     + fromBook.topic(), 60), "pl:frombook"));
         }
         rows.add(btn("⏱ Время: " + minutes + " мин", "pl:mn"),
-                btn(d.summative ? "📝 БЖБ: да ✅" : "📝 БЖБ: нет", "pl:bzb"));
+                btn(d.summative ? "📝 БЖБ: да ✅" : "📝 БЖБ: нет", "pl:bzb"),
+                btn(d.termTest ? "🧪 ТЖБ: да ✅" : "🧪 ТЖБ: нет", "pl:tzb"));
+        if (d.termTest) {
+            rows.add(btn(blank(d.testText) ? "📎 Прислать задания ТЖБ" : "📎 Заменить задания ТЖБ", "pl:tt"));
+        }
         rows.add(btn("✏️ Дата", "pl:edit:date"), btn("✏️ Классы", "pl:edit:classes"))
                 .add(btn("✏️ Раздел", "pl:edit:section"), btn("✏️ Тема", "pl:edit:topic"),
                         btn("✏️ Цели", "pl:edit:objectives"))
@@ -520,6 +548,11 @@ public class PlanFlow {
         List<SchoolClass> classes = classes(uid, d);
         if (t == null || classes.isEmpty() || blank(d.topic) || blank(d.objectives)) {
             bot.send(chat, "Не хватает данных. Начните заново: /plan", null);
+            return;
+        }
+        if (d.termTest && blank(d.testText)) {
+            bot.send(chat, "Сначала пришлите задания ТЖБ.", null);
+            askTest(uid, chat, d);
             return;
         }
         ConvState.clear(uid);
@@ -550,12 +583,18 @@ public class PlanFlow {
                 t.school, t.fullName, labels(classes), classes.stream().mapToInt(c -> c.studentCount).sum(),
                 d.section, d.topic, d.objectives, notes, null, bookFlow.toJson(d.books),
                 bookFlow.contextFor(d.books), bookFlow.answersFor(d.books), countsOf(classes), d.ktpLessonId,
-                slotIds, d.summative);
+                slotIds, d.summative, d.termTest, d.testText);
         exec.submit(() -> run(job));
+    }
+
+    private void askTest(long uid, long chat, Draft d) {
+        ask(uid, chat, d, PLAN_TEST, "Пришлите одним сообщением текст заданий ТЖБ (СОЧ): listening, speaking, reading, "
+                + "writing. Они попадут в план как есть. Урок: 3 минуты начало, 40 минут работа, 2 минуты конец.");
     }
 
     /** Lesson length: 20 minutes for the summative assessment, else the one chosen for this plan or the profile's. */
     private static int minutesOf(Draft d, Teacher t) {
+        if (d.termTest) return TERM_TEST_MINUTES;
         if (d.summative) return SUMMATIVE_MINUTES;
         return d.minutes != null ? d.minutes : t.lessonMinutes;
     }
@@ -597,13 +636,18 @@ public class PlanFlow {
             bot.send(chat, "План не найден.", null);
             return;
         }
+        if (r.termTest) {
+            bot.send(chat, "План ТЖБ составлен из ваших заданий без ИИ, другой вариант и сокращение к нему не "
+                    + "подходят. Чтобы изменить задания, составьте план заново: /plan", null);
+            return;
+        }
         LOG.infof("[revision] user=%d plan #%d: %s", uid, recordId,
                 !editPrevious ? "another variant" : note == SHORTER_NOTE ? "shorter" : "more tasks");
         Long placeholder = bot.send(chat, progress, null);
         Job job = new Job(uid, chat, placeholder, r.planDate, t.subject, t.lang, minutesOf(r, t), t.school,
                 t.fullName, r.classes, r.students, r.section, r.topic, r.objectives, note,
                 editPrevious ? r.contentJson : null, r.bookRefs, bookFlow.contextFor(bookFlow.fromJson(r.bookRefs)),
-                bookFlow.answersFor(bookFlow.fromJson(r.bookRefs)), countsFor(r), null, List.of(), r.summative);
+                bookFlow.answersFor(bookFlow.fromJson(r.bookRefs)), countsFor(r), null, List.of(), r.summative, false, null);
         exec.submit(() -> run(job));
     }
 
@@ -647,6 +691,7 @@ public class PlanFlow {
         r.bookRefs = src.bookRefs;
         r.classCounts = countsOf(classes);
         r.summative = src.summative;
+        r.termTest = src.termTest;
         r.model = "copy";
         r.persist();
         LOG.infof("[copy] user=%d plan #%d copied to #%d for \"%s\" on %s (no model call)", uid, src.id, r.id,
@@ -655,7 +700,7 @@ public class PlanFlow {
         try {
             LessonContent content = mapper.readValue(r.contentJson, LessonContent.class);
             boolean sent = sendDocx(chat, new PlanDocx.Data(t.lang, t.school, t.fullName, r.planDate, r.classes,
-                    r.students, r.section, r.topic, r.objectives, content, r.classCounts), r.id, r.topic);
+                    r.students, r.section, r.topic, r.objectives, content, r.classCounts, r.termTest), r.id, r.topic);
             if (sent) {
                 bot.send(chat, "Готово ✅ План скопирован для " + r.classes + " на "
                         + r.planDate.format(Dates.FULL) + ".", actions(r.id));
@@ -685,7 +730,7 @@ public class PlanFlow {
         try {
             LessonContent content = mapper.readValue(r.contentJson, LessonContent.class);
             if (sendDocx(chat, new PlanDocx.Data(t.lang, t.school, t.fullName, r.planDate, r.classes, r.students,
-                    r.section, r.topic, r.objectives, content, countsFor(r)), r.id, r.topic)) {
+                    r.section, r.topic, r.objectives, content, countsFor(r), r.termTest), r.id, r.topic)) {
                 bot.send(chat, "Что сделать с этим планом?", actions(r.id));
             }
         } catch (IOException e) {
@@ -702,7 +747,9 @@ public class PlanFlow {
         try {
             LOG.infof("[job] user=%d start: classes=\"%s\" topic=\"%s\" minutes=%d revision=%s", job.userId(),
                     job.classes(), Kb.trunc(job.topic(), 60), job.minutes(), job.previousJson() != null);
-            PlanService.Generated g = plans.generate(new PlanService.Request(job.subject(), job.lang(),
+            PlanService.Generated g = job.termTest()
+                    ? new PlanService.Generated(TermTest.content(job.lang(), job.testText()), 0, 0, 0, 0)
+                    : plans.generate(new PlanService.Request(job.subject(), job.lang(),
                     job.minutes(), job.classes(), job.students(), job.section(), job.topic(), job.objectives(),
                     job.notes(), job.previousJson(), job.bookContext()));
             // the model picks and cites the exercises, the exact answer keys come from the stored page data
@@ -720,10 +767,11 @@ public class PlanFlow {
                 r.topic = job.topic();
                 r.objectives = job.objectives();
                 r.contentJson = json;
-                r.model = plans.model();
+                r.model = job.termTest() ? "local" : plans.model();
                 r.bookRefs = job.bookRefs();
                 r.classCounts = job.classCounts();
                 r.summative = job.summative();
+                r.termTest = job.termTest();
                 r.tokensIn = g.tokensIn();
                 r.tokensOut = g.tokensOut();
                 r.attempts = g.attempts();
@@ -748,7 +796,7 @@ public class PlanFlow {
             if (job.placeholderId() != null) bot.delete(job.chatId(), job.placeholderId());
             boolean sent = sendDocx(job.chatId(), new PlanDocx.Data(job.lang(), job.school(), job.teacher(),
                     job.date(), job.classes(), job.students(), job.section(), job.topic(), job.objectives(),
-                    content, job.classCounts()), id, job.topic());
+                    content, job.classCounts(), job.termTest()), id, job.topic());
             LOG.infof("[job] user=%d finished in %d ms, document sent=%s", job.userId(),
                     (System.nanoTime() - started) / 1_000_000, sent);
             if (sent) {

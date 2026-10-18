@@ -357,6 +357,12 @@ public class EveningFlow {
         boolean fresh = g.slots().stream().noneMatch(s -> now - started.getOrDefault(s.id, 0L) < 180_000);
         if (!fresh) return false;
         Draft d = draftFor(g, date);
+        if (d.termTest) {
+            bot.send(chat, "Урок «" + g.lesson().topic + "» это ТЖБ (СОЧ). Пришлите задания текстом: нажмите "
+                    + "«📎 Прислать задания ТЖБ».", null);
+            plan.review(uid, chat, d);
+            return false;
+        }
         if (d.objectives == null || d.objectives.isBlank()) {
             bot.send(chat, "В КТП у урока «" + g.lesson().topic + "» нет целей обучения. Допишите их:",
                     null);
@@ -374,6 +380,7 @@ public class EveningFlow {
         d.date = date.toString();
         d.classIds = g.classes().stream().map(c -> c.id).collect(Collectors.toCollection(ArrayList::new));
         d.notes = "";
+        d.termTest = "interim".equals(g.lesson().kind);
         d.ktpAsked = true;
         d.bookAsked = true;
         d.books = new ArrayList<>(books.autoPick(g.lesson(), g.classes(), date));
