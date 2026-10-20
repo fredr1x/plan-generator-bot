@@ -186,8 +186,32 @@ public class BookFlow {
             Book b = Book.findById(r.bookId);
             sb.append("\nУчебник: ").append(b == null ? "?" : b.title + " (" + b.typeLabel() + ")")
                     .append(", стр. ").append(r.pages);
+            if (b != null && r.pages != null) {
+                String what = books.describe(books.find(b.id, r.pages).pages());
+                if (!what.isBlank()) sb.append('\n').append(what);
+            }
         }
         return sb.toString();
+    }
+
+    /** Moves the pages of the first book by delta ("add" = one more page after the last). False when a page is missing. */
+    boolean shiftPages(Draft d, String how) {
+        if (d.books.isEmpty() || d.books.get(0).bookId == null) return false;
+        BookRef r = d.books.get(0);
+        List<Integer> now = BookService.parseSpec(r.pages);
+        if (now.isEmpty()) return false;
+        List<Integer> next = new ArrayList<>();
+        if ("add".equals(how)) {
+            next.addAll(now);
+            next.add(now.get(now.size() - 1) + 1);
+        } else {
+            int delta = Integer.parseInt(how);
+            now.forEach(n -> next.add(n + delta));
+        }
+        String spec = BookService.canonical(next);
+        if (!books.find(r.bookId, spec).missing().isEmpty()) return false;
+        r.pages = spec;
+        return true;
     }
 
     /**
@@ -201,7 +225,7 @@ public class BookFlow {
         Set<String> types = new HashSet<>();
         for (Book b : candidates(new Draft(), classes, date)) {
             if (!types.add(String.valueOf(b.bookType))) continue;
-            var found = books.suggest(b.id, lesson.topic, lesson.objectives);
+            var found = books.suggest(b.id, lesson.topic, lesson.unitTitle, lesson.objectives);
             if (!found.isEmpty()) out.add(new BookRef(b.id, found.get(0).spec()));
         }
         return out;

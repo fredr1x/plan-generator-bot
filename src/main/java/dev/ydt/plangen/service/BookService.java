@@ -101,26 +101,46 @@ public class BookService {
 
     // ------------------------------------------------------------------ search by topic
 
-    /** Up to three page ranges (the best page and the one after it) that match the topic and objectives. */
     public List<Suggestion> suggest(long bookId, String topic, String objectives) {
+        return suggest(bookId, topic, null, objectives);
+    }
+
+    /**
+     * Up to three page ranges (the best page and the one after it) that match the topic and objectives. A word
+     * that occurs on many pages ("grammar", "unit") counts less than a rare one (idf); the unit title of the KTP
+     * lesson adds a little for pages of that unit.
+     */
+    public List<Suggestion> suggest(long bookId, String topic, String unit, String objectives) {
         List<String> topicStems = stems(topic);
+        List<String> unitStems = stems(unit);
         List<String> objectiveStems = stems(objectives);
         if (topicStems.isEmpty() && objectiveStems.isEmpty()) return List.of();
 
         record Scored(BookPage page, double score) {}
+        record Text(BookPage page, String head, String summary, String body) {}
         List<BookPage> all = BookPage.ofBook(bookId);
-        List<Scored> scored = new ArrayList<>();
+        List<Text> texts = new ArrayList<>();
         for (BookPage p : all) {
-            String head = lower(p.unit) + " " + lower(p.heading) + " " + lower(p.keywords);
-            String summary = lower(p.summary);
-            String body = lower(p.searchText);
+            texts.add(new Text(p, lower(p.unit) + " " + lower(p.heading) + " " + lower(p.keywords), lower(p.summary),
+                    lower(p.searchText)));
+        }
+        java.util.Map<String, Double> idf = new java.util.HashMap<>();
+        for (List<String> words : List.of(topicStems, unitStems, objectiveStems)) {
+            for (String w : words) {
+                idf.computeIfAbsent(w, k -> {
+                    long df = texts.stream().filter(t -> t.head().contains(k) || t.summary().contains(k)
+                            || t.body().contains(k)).count();
+                    return Math.log(1.0 + (double) texts.size() / (1 + df));
+                });
+            }
+        }
+        List<Scored> scored = new ArrayList<>();
+        for (Text t : texts) {
+            BookPage p = t.page();
             double s = 0;
-            for (String w : topicStems) {
-                s += (head.contains(w) ? 4 : 0) + (summary.contains(w) ? 2 : 0) + (body.contains(w) ? 1 : 0);
-            }
-            for (String w : objectiveStems) {
-                s += 0.4 * ((head.contains(w) ? 4 : 0) + (summary.contains(w) ? 2 : 0) + (body.contains(w) ? 1 : 0));
-            }
+            for (String w : topicStems) s += idf.get(w) * match(t.head(), t.summary(), t.body(), w);
+            for (String w : objectiveStems) s += 0.4 * idf.get(w) * match(t.head(), t.summary(), t.body(), w);
+            for (String w : unitStems) s += 0.5 * idf.get(w) * (t.head().contains(w) ? 1 : 0);
             if ("contents".equals(p.kind) || "cover".equals(p.kind)) s *= 0.3;
             if (s > 0) scored.add(new Scored(p, s));
         }
@@ -133,12 +153,27 @@ public class BookService {
             BookPage p = sc.page();
             if (used.contains(p.pdfPage)) continue;
             BookPage next = all.stream().filter(x -> x.pdfPage == p.pdfPage + 1).findFirst().orElse(null);
-            List<BookPage> range = next != null && !used.contains(next.pdfPage) ? List.of(p, next) : List.of(p);
+            boolean sameLesson = next != null && !(lessonCode(p.heading) != null && lessonCode(next.heading) != null
+                    && !lessonCode(p.heading).equals(lessonCode(next.heading)));
+            List<BookPage> range = sameLesson && !used.contains(next.pdfPage) ? List.of(p, next) : List.of(p);
             range.forEach(x -> used.add(x.pdfPage));
             String label = (blank(p.unit) ? "" : p.unit + " · ") + (blank(p.heading) ? "" : p.heading);
             out.add(new Suggestion(pagesLabel(range), oneLine(label)));
         }
         return out;
+    }
+
+    private static int match(String head, String summary, String body, String w) {
+        return (head.contains(w) ? 4 : 0) + (summary.contains(w) ? 2 : 0) + (body.contains(w) ? 1 : 0);
+    }
+
+    private static final Pattern LESSON_CODE = Pattern.compile("^\\s*(\\d{1,2}[a-f])\\b", Pattern.CASE_INSENSITIVE);
+
+    /** "3b Apps on the go" -> "3b": the lesson of the unit that the page belongs to, or null. */
+    private static String lessonCode(String heading) {
+        if (heading == null) return null;
+        Matcher m = LESSON_CODE.matcher(heading);
+        return m.find() ? m.group(1).toLowerCase(Locale.ROOT) : null;
     }
 
     private static List<String> stems(String text) {
@@ -164,16 +199,19 @@ public class BookService {
     public String describe(List<BookPage> pages) {
         StringBuilder sb = new StringBuilder();
         for (BookPage p : pages) {
-            int ex = 0;
+            List<String> ex = new ArrayList<>();
             try {
-                ex = mapper.readTree(p.contentJson).path("exercises").size();
+                for (JsonNode e : mapper.readTree(p.contentJson).path("exercises")) {
+                    ex.add(e.path("number").asText("?") + " " + e.path("kind").asText("other"));
+                }
             } catch (IOException ignored) {
-                // shown without the count
+                // shown without the exercises
             }
             if (sb.length() > 0) sb.append('\n');
             sb.append("• стр. ").append(p.shownNumber());
-            if (!blank(p.heading)) sb.append(" «").append(clip(oneLine(p.heading), 40)).append('»');
-            sb.append(" — упражнений: ").append(ex);
+            if (!blank(p.heading)) sb.append(" «").append(oneLine(p.heading)).append('»');
+            sb.append(" — упражнений: ").append(ex.size());
+            if (!ex.isEmpty()) sb.append(" (").append(String.join(", ", ex)).append(')');
         }
         return sb.toString();
     }

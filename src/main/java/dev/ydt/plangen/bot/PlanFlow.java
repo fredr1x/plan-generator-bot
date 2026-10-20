@@ -318,6 +318,14 @@ public class PlanFlow {
                 if (d.summative) d.termTest = false;
                 confirm(uid, chat, d);
             }
+            case "pgs" -> {
+                if (bookFlow.shiftPages(d, p[2])) {
+                    bot.answer(cbId, null);
+                    confirm(uid, chat, d);
+                } else {
+                    bot.answer(cbId, "Такой страницы нет в загруженной книге");
+                }
+            }
             case "tzb" -> {
                 bot.answer(cbId, null);
                 d.termTest = !d.termTest;
@@ -523,6 +531,9 @@ public class PlanFlow {
         if (fromBook != null) {
             rows.add(btn(Kb.trunc("📖 Из книги: " + (fromBook.section().isBlank() ? "" : fromBook.section() + " · ")
                     + fromBook.topic(), 60), "pl:frombook"));
+        }
+        if (!d.termTest && !d.books.isEmpty()) {
+            rows.add(btn("◀ стр. −1", "pl:pgs:-1"), btn("стр. +1 ▶", "pl:pgs:1"), btn("➕ ещё страница", "pl:pgs:add"));
         }
         rows.add(btn("⏱ Время: " + minutes + " мин", "pl:mn"),
                 btn(d.summative ? "📝 БЖБ: да ✅" : "📝 БЖБ: нет", "pl:bzb"),
