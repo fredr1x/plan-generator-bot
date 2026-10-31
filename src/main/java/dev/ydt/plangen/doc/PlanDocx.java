@@ -46,7 +46,6 @@ public final class PlanDocx {
     private static final int[] HEADER_COLS = {3100, 3900, 3205};          // total 10205 twips (18 cm)
     private static final int[] STAGE_COLS = {1500, 2900, 2800, 1700, 1305};
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
-    private static final String[] STAGE_NAMES = {"Beginning of the class", "Middle of the class", "End of the class"};
 
     private PlanDocx() {}
 
@@ -121,13 +120,19 @@ public final class PlanDocx {
         label(t.getRow(4).getCell(0), l.learningObjectives());
         text(span(t.getRow(4), 1, HEADER_COLS), d.objectives(), false);
 
-        // row 5: value of the Birtutas tarbiye programme, the whole line in bold
+        // row 5: values of the Birtutas tarbiye programme: "-Unity and solidarity (Бірлік және ынтымақ): action"
         label(t.getRow(5).getCell(0), l.valuesLabel());
         XWPFTableCell valueCell = span(t.getRow(5), 1, HEADER_COLS);
-        if (d.content().programValue() != null) {
-            run(valueCell.getParagraphs().get(0),
-                    l.valuesPrefix() + " - " + d.content().programValue().title(d.lang()), true, SIZE);
+        List<String> values = new java.util.ArrayList<>();
+        if (d.content().values() != null) {
+            for (LessonContent.ValueLink v : d.content().values()) {
+                if (v == null || v.value() == null) continue;
+                String name = v.value().title(d.lang());
+                if (!"kk".equals(d.lang())) name += " (" + v.value().title("kk") + ")";
+                values.add("-" + name + (v.action() == null || v.action().isBlank() ? "" : ": " + v.action().strip()));
+            }
         }
+        text(valueCell, String.join("\n", values), false);
 
         // row 6: lesson objectives, one heading and short dashed sentences
         label(t.getRow(6).getCell(0), l.lessonObjectives());
@@ -198,9 +203,10 @@ public final class PlanDocx {
         for (int i = 0; i < stages.size(); i++) {
             Stage s = stages.get(i);
             XWPFTableRow row = t.getRow(i + 1);
-            // always English here: "Beginning of the class 10 min" (how long the stage takes, not an interval)
-            String name = stages.size() == STAGE_NAMES.length ? STAGE_NAMES[i] : (s.name() == null ? "" : s.name());
-            text(row.getCell(0), name + " " + s.minutes() + " min", false);
+            // always English, by position: "Beginning 5 min", "Middle 10 min", then only "8 min" for the next
+            // Middle rows, "End 5 min" (how long the row takes, not an interval)
+            String name = i == 0 ? "Beginning\n" : i == stages.size() - 1 ? "End\n" : i == 1 ? "Middle\n" : "";
+            text(row.getCell(0), name + s.minutes() + " min", false);
             text(row.getCell(1), s.teacherActions(), false);
             text(row.getCell(2), i == stages.size() - 1 && !termTest ? s.studentActions() + "\n" + l.scale()
                     : s.studentActions(), false);

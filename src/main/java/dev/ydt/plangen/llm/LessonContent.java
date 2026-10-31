@@ -12,30 +12,38 @@ import java.util.List;
  */
 @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
 public record LessonContent(
-        @Description("Lesson objectives: 2-3 short sentences, each starting with a bare verb so that it continues "
-                + "\"Learners will be able to:\", e.g. \"Learn the affirmative and negative forms of the Present Simple\"")
+        @Description("Lesson objectives (assessment criteria): 2-3 short sentences, each starting with a bare verb so "
+                + "that it continues \"Learners will be able to:\", e.g. \"Learn and practise vocabulary for holidays\"")
         List<String> lessonObjectives,
-        @Description("Exactly three stages in order: beginning, middle, end of the class")
+        @Description("Rows of the lesson procedure in order: one \"Beginning\" row, then one \"Middle\" row per "
+                + "assessed exercise or activity, then one \"End\" row")
         List<Stage> stages,
-        @Description("The one value of the Birtutas tarbiye programme that the lesson activities develop most "
-                + "(group or pair work: UNITY_AND_SOLIDARITY; rules, laws, civic topics: LAW_AND_ORDER; homeland, "
-                + "history, symbols: INDEPENDENCE_AND_PATRIOTISM; fairness, duty: JUSTICE_AND_RESPONSIBILITY; "
-                + "effort, professions: HARD_WORK_AND_PROFESSIONALISM; projects, new ideas, technology: "
-                + "CREATIVITY_AND_INNOVATION)")
-        ProgramValue programValue) {
+        @Description("2-3 values of the Birtutas tarbiye programme that the lesson develops, each with the observable "
+                + "learner action that shows it in this lesson")
+        List<ValueLink> values) {
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record Stage(
-            @Description("Stage name, exactly one of: \"Beginning of the class\", \"Middle of the class\", \"End of the class\"")
+            @Description("Exactly \"Beginning\", \"Middle\" or \"End\"")
             String name,
-            @Description("Length of the stage in minutes, an integer")
+            @Description("Length of this row in minutes, an integer")
             int minutes,
-            @Description("Teacher actions: concrete, with the text of the tasks and examples")
+            @Description("Teacher actions: starts with the exercise reference (\"Ex. 1, p. 32\") when it is a textbook "
+                    + "exercise, then short concrete steps")
             String teacherActions,
-            @Description("Student actions: what exactly they do, say, write, and in which form they work")
+            @Description("Student actions: what exactly they do, then ANSWERS with the real answers item by item")
             String studentActions,
-            @Description("Assessment: technique, criterion and descriptors")
+            @Description("Assessment: for a Middle row \"Exercise N — X points\" with one-point descriptors; for "
+                    + "Beginning and End oral feedback")
             String assessment,
-            @Description("Resources: coursebook, cards, presentation etc., without invented pages or links")
+            @Description("Resources: coursebook, cards, pictures, LED screen etc., without invented pages or links")
             String resources) {}
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record ValueLink(
+            @Description("The value of the Birtutas tarbiye programme")
+            ProgramValue value,
+            @Description("What learners do in this lesson that develops the value, one short phrase, e.g. \"listen to a "
+                    + "partner and discuss travel choices respectfully\"")
+            String action) {}
 }

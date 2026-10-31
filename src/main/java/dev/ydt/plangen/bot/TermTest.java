@@ -8,7 +8,7 @@ import java.util.List;
 final class TermTest {
     private TermTest() {}
 
-    private static final String[] NAMES = {"Beginning of the class", "Middle of the class", "End of the class"};
+    private static final String[] NAMES = {"Beginning", "Middle", "End"};
 
     static LessonContent content(String lang, String tasks) {
         String[][] t = switch (lang == null ? "en" : lang) {

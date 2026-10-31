@@ -16,7 +16,9 @@ public class PlanService {
     private static final Logger LOG = Logger.getLogger(PlanService.class);
 
     private static final int MAX_ATTEMPTS = 2;
-    private static final int STAGES = 3;
+    /** Beginning, at least one Middle row, End; more than 8 rows would not fit the page. */
+    private static final int MIN_STAGES = 3;
+    private static final int MAX_STAGES = 8;
 
     /** previous: JSON of an earlier plan to be edited instead of writing a new one (null for a fresh plan). */
     public record Request(String subject, String lang, int minutes, String classes, int students,
@@ -123,9 +125,10 @@ public class PlanService {
         if (empty != null) {
             return empty;
         }
-        if (c.stages().size() != STAGES) {
-            return "There must be exactly " + STAGES + " stages (beginning, middle, end of the class), but there are "
-                    + c.stages().size() + ".";
+        int n = c.stages().size();
+        if (n < MIN_STAGES || n > MAX_STAGES) {
+            return "There must be one Beginning row, one Middle row per assessed exercise (usually 4) and one End row, "
+                    + "but there are " + n + " rows.";
         }
         int sum = c.stages().stream().mapToInt(Stage::minutes).sum();
         if (sum != minutes) {
@@ -169,7 +172,7 @@ public class PlanService {
             stages.set(idx, new Stage(big.name(), Math.max(1, big.minutes() + delta), big.teacherActions(),
                     big.studentActions(), big.assessment(), big.resources()));
         }
-        return new LessonContent(cleanItems(c.lessonObjectives()), stages, c.programValue());
+        return new LessonContent(cleanItems(c.lessonObjectives()), stages, c.values());
     }
 
     private static List<String> cleanItems(List<String> in) {

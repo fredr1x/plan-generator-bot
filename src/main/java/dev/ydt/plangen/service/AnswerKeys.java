@@ -30,7 +30,7 @@ public final class AnswerKeys {
         for (Stage s : content.stages()) {
             out.add(withKeys(s, answers));
         }
-        return new LessonContent(content.lessonObjectives(), out, content.programValue());
+        return new LessonContent(content.lessonObjectives(), out, content.values());
     }
 
     private static Stage withKeys(Stage s, List<Answer> answers) {
