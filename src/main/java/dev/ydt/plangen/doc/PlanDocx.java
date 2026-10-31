@@ -252,7 +252,7 @@ public final class PlanDocx {
         pr.addNewGridSpan().setVal(BigInteger.valueOf(count));
         c.setWidth(String.valueOf(width));
         for (int i = 1; i < count; i++) {
-            row.getCtRow().removeTc(cell + 1);
+            row.removeCell(cell + 1); // keeps the row's cell list in sync, removeTc on the XML left orphaned cells
         }
         return c;
     }
