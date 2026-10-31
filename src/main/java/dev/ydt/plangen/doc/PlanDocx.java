@@ -11,10 +11,15 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 import org.apache.poi.xwpf.usermodel.TableRowAlign;
+import org.apache.poi.xwpf.usermodel.UnderlinePatterns;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFHyperlinkRun;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.poi.xwpf.usermodel.XWPFRun;
 import org.apache.poi.xwpf.usermodel.XWPFTable;
@@ -51,6 +56,8 @@ public final class PlanDocx {
     private static final int[] STAGE_COLS = {1385, 3920, 2250, 1839, 1463};
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     /** Lines printed in bold: the exercise reference, ANSWERS and the points line, as in the sample. */
+    /** "AI prompt: "..."" line of the AI task; the prompt becomes a link that opens ChatGPT with it. */
+    private static final Pattern AI_PROMPT = Pattern.compile("(?i)^\\s*(AI prompt:)\\s*[\"“«](.+?)[\"”»]\\s*$");
     private static final Pattern BOLD_LINE = Pattern.compile("(?i)^\\s*(ex\\.?\\s*:?\\s*\\d.*|answers\\b.*|ответы\\b.*"
             + "|жауаптар\\b.*|exercise\\s+\\d+.*points?.*|упражнение\\s+\\d+.*балл.*|\\d+-жаттығу.*балл.*)$");
 
@@ -263,7 +270,14 @@ public final class PlanDocx {
         for (int i = 0; i < lines.length; i++) {
             XWPFParagraph p = i == 0 ? cell.getParagraphs().get(0) : cell.addParagraph();
             p.setSpacingAfter(0);
-            run(p, lines[i], BOLD_LINE.matcher(lines[i]).matches(), SIZE);
+            Matcher ai = AI_PROMPT.matcher(lines[i]);
+            if (ai.matches()) {
+                run(p, ai.group(1) + " ", true, SIZE);
+                link(p, "https://chatgpt.com/?q=" + URLEncoder.encode(ai.group(2), StandardCharsets.UTF_8)
+                        .replace("+", "%20"), ai.group(2));
+            } else {
+                run(p, lines[i], BOLD_LINE.matcher(lines[i]).matches(), SIZE);
+            }
         }
     }
 
@@ -275,6 +289,15 @@ public final class PlanDocx {
             p.setSpacingAfter(0);
             run(p, lines[i], bold, SIZE);
         }
+    }
+
+    private static void link(XWPFParagraph p, String url, String text) {
+        XWPFHyperlinkRun r = p.createHyperlinkRun(url);
+        r.setFontFamily(FONT);
+        r.setFontSize(SIZE);
+        r.setColor("0563C1");
+        r.setUnderline(UnderlinePatterns.SINGLE);
+        r.setText(text);
     }
 
     private static XWPFRun run(XWPFParagraph p, String text, boolean bold, int size) {
