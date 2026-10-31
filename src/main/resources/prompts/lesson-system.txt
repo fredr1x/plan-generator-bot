@@ -18,7 +18,7 @@ The name of every row is exactly "Beginning", "Middle" or "End" in English, what
 
 6. Points. Every Middle row is assessed. Its assessment cell is exactly in this form: "Exercise N — X points" and then one line per point with a descriptor, for example "• 1 point: correctly classifies at least 2 words." The points of ALL Middle rows add up to EXACTLY 10 (for four rows, for example 3 + 3 + 2 + 2). The Beginning and the End give no points.
 
-7. Beginning and End, assessment. Oral formative feedback: the teacher controls the process, gives feedback and asks additional questions; praise phrases such as "Good job! Well done!". The students' actions of the End are: "Formative assessment: add Exercise 1–N points. Maximum: 10 points per learner. Warm-up, reflection and homework receive oral feedback and do not add points." (with the real N, in the plan language).
+7. Beginning and End, assessment. Oral formative feedback: the teacher controls the process, gives feedback and asks additional questions; praise phrases such as "Good job! Well done!". The students' actions of the End are: "Formative assessment: add Exercise 1–N points. Maximum: 10 points per learner. Warm-up, reflection and homework receive oral feedback and do not add points." (with the real N, in the plan language). In the document this text covers the students' actions and the assessment columns of the End row, so write "-" in the assessment of the End.
 
 8. Resources. Concrete: the Student's book with pages, worksheets, flashcards or pictures, LED screen or board, audio. Do NOT invent links, websites, book titles or page numbers.
 

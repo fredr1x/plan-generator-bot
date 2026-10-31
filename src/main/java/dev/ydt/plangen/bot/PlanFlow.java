@@ -599,6 +599,17 @@ public class PlanFlow {
         exec.submit(() -> run(job));
     }
 
+    /** The number of the lesson in the KTP for the document header ("lesson 25"), or null. */
+    private static Integer lessonNo(Long planId, Long ktpLessonId) {
+        Long lessonId = ktpLessonId;
+        if (lessonId == null && planId != null) {
+            KtpSlot slot = KtpSlot.find("planId", planId).firstResult();
+            lessonId = slot == null ? null : slot.lessonId;
+        }
+        KtpLesson l = lessonId == null ? null : KtpLesson.findById(lessonId);
+        return l == null ? null : l.seq;
+    }
+
     /** The term test uses no coursebook. */
     private static List<Draft.BookRef> booksOf(Draft d) {
         return d.termTest ? List.of() : d.books;
@@ -717,7 +728,7 @@ public class PlanFlow {
         try {
             LessonContent content = mapper.readValue(r.contentJson, LessonContent.class);
             boolean sent = sendDocx(chat, new PlanDocx.Data(t.lang, t.school, t.fullName, r.planDate, r.classes,
-                    r.students, r.section, r.topic, r.objectives, content, r.classCounts, r.termTest), r.id, r.topic);
+                    r.students, r.section, r.topic, r.objectives, content, r.classCounts, r.termTest, lessonNo(r.id, null)), r.id, r.topic);
             if (sent) {
                 bot.send(chat, "Готово ✅ План скопирован для " + r.classes + " на "
                         + r.planDate.format(Dates.FULL) + ".", actions(r.id));
@@ -747,7 +758,7 @@ public class PlanFlow {
         try {
             LessonContent content = mapper.readValue(r.contentJson, LessonContent.class);
             if (sendDocx(chat, new PlanDocx.Data(t.lang, t.school, t.fullName, r.planDate, r.classes, r.students,
-                    r.section, r.topic, r.objectives, content, countsFor(r), r.termTest), r.id, r.topic)) {
+                    r.section, r.topic, r.objectives, content, countsFor(r), r.termTest, lessonNo(r.id, null)), r.id, r.topic)) {
                 bot.send(chat, "Что сделать с этим планом?", actions(r.id));
             }
         } catch (IOException e) {
@@ -813,7 +824,7 @@ public class PlanFlow {
             if (job.placeholderId() != null) bot.delete(job.chatId(), job.placeholderId());
             boolean sent = sendDocx(job.chatId(), new PlanDocx.Data(job.lang(), job.school(), job.teacher(),
                     job.date(), job.classes(), job.students(), job.section(), job.topic(), job.objectives(),
-                    content, job.classCounts(), job.termTest()), id, job.topic());
+                    content, job.classCounts(), job.termTest(), lessonNo(id, job.ktpLessonId())), id, job.topic());
             LOG.infof("[job] user=%d finished in %d ms, document sent=%s", job.userId(),
                     (System.nanoTime() - started) / 1_000_000, sent);
             if (sent) {

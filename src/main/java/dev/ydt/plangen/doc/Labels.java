@@ -23,7 +23,8 @@ public record Labels(
         String assessment,
         String resources,
         String minutes,
-        String scale) {
+        String scale,
+        String lesson) {
 
     public static Labels of(String lang) {
         return switch (lang == null ? "en" : lang) {
@@ -35,18 +36,19 @@ public record Labels(
 
     private static final Labels EN = new Labels(
             "Short term plan",
-            "Unit / Section", "School", "Teacher's name", "Date", "Class",
-            "Number present", "Absent",
-            "Lesson topic",
+            "Unit / Section", "School", "Teacher name", "Date", "Grade",
+            "Number present", "absent",
+            "Lesson title",
             "Learning objectives",
             "Instilling values of the program \"Birtutas tarbiye\"",
             "Values of the program \"Birtutas tarbiye\"",
             "Lesson objectives (assessment criteria)",
             "Learners will be able to:",
             "Lesson procedure",
-            "Stages / Time", "Teacher's actions", "Students' actions", "Assessment", "Resources",
+            "Stages/\nTime", "Teachers actions", "Students actions", "Assessment", "Resources",
             "min",
-            "Total: 10 points\n9-10 points \u2013 \u201c5\u201d\n7-8 points \u2013 \u201c4\u201d\n5-6 points \u2013 \u201c3\u201d");
+            "Total: 10 points\n9-10 points \u2013 \u201c5\u201d\n7-8 points \u2013 \u201c4\u201d\n5-6 points \u2013 \u201c3\u201d",
+            "lesson");
 
     private static final Labels RU = new Labels(
             "Краткосрочный (поурочный) план",
@@ -59,9 +61,10 @@ public record Labels(
             "Цели урока (критерии оценивания)",
             "Учащиеся смогут:",
             "Ход урока",
-            "Этап урока / Время", "Действия педагога", "Действия ученика", "Оценивание", "Ресурсы",
+            "Этап урока/\nВремя", "Действия педагога", "Действия ученика", "Оценивание", "Ресурсы",
             "мин",
-            "Всего: 10 баллов\n9-10 баллов \u2013 \u00ab5\u00bb\n7-8 баллов \u2013 \u00ab4\u00bb\n5-6 баллов \u2013 \u00ab3\u00bb");
+            "Всего: 10 баллов\n9-10 баллов \u2013 \u00ab5\u00bb\n7-8 баллов \u2013 \u00ab4\u00bb\n5-6 баллов \u2013 \u00ab3\u00bb",
+            "урок");
 
     private static final Labels KK = new Labels(
             "Қысқа мерзімді (сабақ) жоспар",
@@ -74,7 +77,8 @@ public record Labels(
             "Сабақтың мақсаттары (бағалау критерийлері)",
             "Оқушылар орындай алады:",
             "Сабақтың барысы",
-            "Сабақ кезеңі / Уақыты", "Педагогтің әрекеті", "Оқушының әрекеті", "Бағалау", "Ресурстар",
+            "Сабақ кезеңі/\nУақыты", "Педагогтің әрекеті", "Оқушының әрекеті", "Бағалау", "Ресурстар",
             "мин",
-            "Барлығы: 10 балл\n9-10 балл \u2013 \u00ab5\u00bb\n7-8 балл \u2013 \u00ab4\u00bb\n5-6 балл \u2013 \u00ab3\u00bb");
+            "Барлығы: 10 балл\n9-10 балл \u2013 \u00ab5\u00bb\n7-8 балл \u2013 \u00ab4\u00bb\n5-6 балл \u2013 \u00ab3\u00bb",
+            "сабақ");
 }
